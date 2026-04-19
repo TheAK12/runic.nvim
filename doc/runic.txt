@@ -51,7 +51,7 @@ COMMANDS                                                         *runic-commands
         Force project-mode resolution.
 
     :SmartRunExplain
-        Show selected candidate and top alternatives.
+        Show selected candidate and top candidates.
 
     :SmartRunLast
         Rerun last executed candidate.

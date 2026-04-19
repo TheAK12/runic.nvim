@@ -3,12 +3,12 @@
 Smart project/file runner for Neovim.
 
 It detects project context, ranks candidate commands, runs the best one, and
-can show or pick alternatives.
+can pick from candidates when needed.
 
 Module names:
 
 - preferred: `runic`
-- compatibility alias: `smart_run`
+- legacy alias: `smart_run`
 
 ## Features
 
