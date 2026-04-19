@@ -5,19 +5,19 @@ Smart project/file runner for Neovim.
 It detects project context, ranks candidate commands, runs the best one, and
 can pick from candidates when needed.
 
-Module names:
+Module name:
 
-- preferred: `runic`
-- legacy alias: `smart_run`
+- `runic`
 
 ## Features
 
-- Auto run (`:SmartRun`) from project/file context
-- Candidate picker (`:SmartRunPick`)
-- Explain mode (`:SmartRunExplain`)
-- Last command rerun (`:SmartRunLast`)
-- Cache + cache clear command (`:SmartRunCacheClear`)
-- Override hooks (`vim.g.smart_run_command`, `vim.g.smart_run_filetype_commands`, `vim.g.smart_run_resolver`)
+- Auto run (`:RunicRun`) from project/file context
+- Candidate picker (`:RunicPick`)
+- Explain mode (`:RunicExplain`)
+- Last command rerun (`:RunicLast`)
+- Cache controls (`:RunicCacheClear`, `:RunicCacheInfo`)
+- Toolchain diagnostics (`:RunicHealth`)
+- Override hooks (`vim.g.runic_command`, `vim.g.runic_filetype_commands`, `vim.g.runic_resolver`)
 
 ## Install (vim.pack)
 
@@ -26,7 +26,7 @@ vim.pack.add({
   { src = "https://github.com/TheAK12/runic.nvim" },
 })
 vim.cmd.packadd("runic.nvim")
-require("smart_run").setup({})
+require("runic").setup({})
 ```
 
 ## Install (lazy.nvim)
@@ -57,27 +57,25 @@ require("runic").setup({
 })
 ```
 
-or
-
-```lua
-require("smart_run").setup({})
-```
-
 ## Global overrides
 
-- `vim.g.smart_run_command = "<cmd>"`
-- `vim.g.smart_run_filetype_commands = { python = "...", go = "..." }`
-- `vim.g.smart_run_resolver = function(ctx) return { command = "...", priority = 9999 } end`
-- `vim.g.smart_run_python_project_runner = true`
-- `vim.g.smart_run_focus_terminal = true`
-- `vim.g.smart_run_use_snacks_terminal = true`
+- `vim.g.runic_command = "<cmd>"`
+- `vim.g.runic_filetype_commands = { python = "...", go = "..." }`
+- `vim.g.runic_resolver = function(ctx) return { command = "...", priority = 9999 } end`
+- `vim.g.runic_python_project_runner = true`
+- `vim.g.runic_focus_terminal = true`
+- `vim.g.runic_use_snacks_terminal = true`
 
 ## Commands
 
-- `:SmartRun`
-- `:SmartRunPick`
-- `:SmartRunFile`
-- `:SmartRunProject`
-- `:SmartRunExplain`
-- `:SmartRunLast`
-- `:SmartRunCacheClear`
+- `:RunicRun`
+- `:RunicPick`
+- `:RunicRunFile`
+- `:RunicRunProject`
+- `:RunicPreview`
+- `:RunicExplain`
+- `:RunicLast`
+- `:RunicHistory`
+- `:RunicCacheClear`
+- `:RunicCacheInfo`
+- `:RunicHealth`
