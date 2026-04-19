@@ -1,0 +1,83 @@
+*runic.nvim* Smart project/file runner                              *runic*
+
+Author: Amritanshu Kumar
+License: MIT
+
+==============================================================================
+CONTENTS                                                        *runic-contents*
+
+1. Overview........................................................|runic-overview|
+2. Setup..............................................................|runic-setup|
+3. Commands........................................................|runic-commands|
+4. Globals..........................................................|runic-globals|
+
+==============================================================================
+OVERVIEW                                                         *runic-overview*
+
+runic.nvim detects project context and current file type, ranks run
+candidates, and executes the best command.
+
+==============================================================================
+SETUP                                                               *runic-setup*
+
+Lua:
+
+>
+  require("smart_run").setup({
+    create_commands = true,
+    create_keymaps = true,
+  })
+<
+
+Aliases:
+
+>
+  require("runic").setup({})
+<
+
+==============================================================================
+COMMANDS                                                         *runic-commands*
+
+    :SmartRun
+        Run best-ranked candidate.
+
+    :SmartRunPick
+        Pick from ranked candidates.
+
+    :SmartRunFile
+        Force file-mode resolution.
+
+    :SmartRunProject
+        Force project-mode resolution.
+
+    :SmartRunExplain
+        Show selected candidate and top alternatives.
+
+    :SmartRunLast
+        Rerun last executed candidate.
+
+    :SmartRunCacheClear
+        Clear resolver cache.
+
+==============================================================================
+GLOBALS                                                           *runic-globals*
+
+    g:smart_run_command
+        String command override for all files.
+
+    g:smart_run_filetype_commands
+        Table of per-filetype override commands.
+
+    g:smart_run_resolver
+        Function override hook returning one candidate or list.
+
+    g:smart_run_python_project_runner
+        When true, enables project-runner preference for Python files.
+
+    g:smart_run_focus_terminal
+        When true, keep focus in terminal after run.
+
+    g:smart_run_use_snacks_terminal
+        When true and Snacks is available, use Snacks terminal.
+
+vim:tw=78:ts=8:noet:ft=help:norl:

@@ -1,0 +1,7 @@
+runic	runic.txt	/*runic*
+runic-commands	runic.txt	/*runic-commands*
+runic-contents	runic.txt	/*runic-contents*
+runic-globals	runic.txt	/*runic-globals*
+runic-overview	runic.txt	/*runic-overview*
+runic-setup	runic.txt	/*runic-setup*
+runic.nvim	runic.txt	/*runic.nvim*

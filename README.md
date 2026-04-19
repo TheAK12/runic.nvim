@@ -1,9 +1,14 @@
-# smart-run.nvim
+# runic.nvim
 
 Smart project/file runner for Neovim.
 
 It detects project context, ranks candidate commands, runs the best one, and
 can show or pick alternatives.
+
+Module names:
+
+- preferred: `runic`
+- compatibility alias: `smart_run`
 
 ## Features
 
@@ -20,6 +25,8 @@ can show or pick alternatives.
 vim.pack.add({
   { src = "https://github.com/TheAK12/runic.nvim" },
 })
+vim.cmd.packadd("runic.nvim")
+require("smart_run").setup({})
 ```
 
 ## Install (lazy.nvim)
@@ -27,6 +34,7 @@ vim.pack.add({
 ```lua
 {
   "TheAK12/runic.nvim",
+  main = "runic",
   opts = {
     create_commands = true,
     create_keymaps = true,
@@ -37,7 +45,7 @@ vim.pack.add({
 ## Setup
 
 ```lua
-require("smart_run").setup({
+require("runic").setup({
   create_commands = true,
   create_keymaps = true,
   keymaps = {
@@ -47,6 +55,12 @@ require("smart_run").setup({
     legacy = "<leader>R",
   },
 })
+```
+
+or
+
+```lua
+require("smart_run").setup({})
 ```
 
 ## Global overrides
