@@ -68,14 +68,14 @@ require("runic").setup({
 
 ## Commands
 
-- `:RunicRun`
-- `:RunicPick`
-- `:RunicRunFile`
-- `:RunicRunProject`
-- `:RunicPreview`
-- `:RunicExplain`
-- `:RunicLast`
-- `:RunicHistory`
-- `:RunicCacheClear`
-- `:RunicCacheInfo`
-- `:RunicHealth`
+- `:RunicRun` - runs the top-ranked command for the current buffer
+- `:RunicPick` - opens a picker so you can choose which command to run
+- `:RunicRunFile` - ignores project rules and runs in file mode only
+- `:RunicRunProject` - ignores file rules and runs in project mode only
+- `:RunicPreview` - shows selected command, working directory, and top candidates
+- `:RunicExplain` - alias of `:RunicPreview`
+- `:RunicLast` - reruns the last command executed by runic
+- `:RunicHistory` - shows recent runic commands and lets you rerun one
+- `:RunicCacheClear` - clears cached resolution results
+- `:RunicCacheInfo` - shows cache entry count, generation, hits, and misses
+- `:RunicHealth` - checks common language/tool executables on your system
