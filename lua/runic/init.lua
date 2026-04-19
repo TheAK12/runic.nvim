@@ -285,7 +285,13 @@ local function run_in_terminal(cmd, cwd)
     end
     for _, line in ipairs(data) do
       if type(line) == "string" and line ~= "" then
-        local url = line:match("(https?://[%w%-%._~:/%?#%[%]@!$&'%%(%)*+,;=]+)")
+        local clean = line:gsub("\27%[[0-9;?]*[%a]", "")
+        clean = clean:gsub("\27%]8;[^\7]*\7", "")
+        clean = clean:gsub("\27%]8;;\7", "")
+
+        local url = clean:match("(https?://localhost:%d+[%w%-%._~:/%?#%[%]@!$&'%%(%)*+,;=]*)")
+          or clean:match("(https?://127%.0%.0%.1:%d+[%w%-%._~:/%?#%[%]@!$&'%%(%)*+,;=]*)")
+          or clean:match("(https?://[%w%-%._~:/%?#%[%]@!$&'%%(%)*+,;=]+)")
         if url then
           open_in_browser(url)
         end
