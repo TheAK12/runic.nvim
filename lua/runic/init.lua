@@ -49,9 +49,10 @@ local defaults = {
   },
   terminal = {
     use_snacks = false,
-    focus = false,
+    focus = true,
     height = 12,
     close_keys = { "<Esc>", "q" },
+    open_url = true,
   },
   history = {
     size = 20,
@@ -234,7 +235,9 @@ local function run_in_terminal(cmd, cwd)
   vim.cmd("botright " .. tostring(M.config.terminal.height) .. "new")
   local term_win = vim.api.nvim_get_current_win()
   local term_buf = vim.api.nvim_get_current_buf()
-  local focus_terminal = M.config.terminal.focus or vim.g.runic_focus_terminal == true
+  local focus_terminal = maybe(vim.g.runic_focus_terminal, M.config.terminal.focus)
+  local open_url = maybe(vim.g.runic_open_url, M.config.terminal.open_url)
+  local opened_urls = {}
 
   vim.bo[term_buf].bufhidden = "wipe"
   vim.bo[term_buf].swapfile = false
@@ -255,8 +258,49 @@ local function run_in_terminal(cmd, cwd)
     end
   end
 
+  local function open_in_browser(url)
+    if opened_urls[url] then
+      return
+    end
+    opened_urls[url] = true
+
+    local opener
+    if vim.fn.has("mac") == 1 then
+      opener = { "open", url }
+    elseif vim.fn.has("win32") == 1 then
+      opener = { "cmd", "/c", "start", "", url }
+    else
+      opener = { "xdg-open", url }
+    end
+
+    vim.fn.jobstart(opener, { detach = true })
+    vim.schedule(function()
+      vim.notify("Runic opened URL: " .. url, vim.log.levels.INFO)
+    end)
+  end
+
+  local function maybe_open_url_from_lines(data)
+    if not open_url or type(data) ~= "table" then
+      return
+    end
+    for _, line in ipairs(data) do
+      if type(line) == "string" and line ~= "" then
+        local url = line:match("(https?://[%w%-%._~:/%?#%[%]@!$&'%%(%)*+,;=]+)")
+        if url then
+          open_in_browser(url)
+        end
+      end
+    end
+  end
+
   local job = vim.fn.termopen({ vim.o.shell, "-lc", cmd }, {
     cwd = cwd,
+    on_stdout = function(_, data)
+      maybe_open_url_from_lines(data)
+    end,
+    on_stderr = function(_, data)
+      maybe_open_url_from_lines(data)
+    end,
     on_exit = function(_, code)
       if code ~= 0 then
         vim.schedule(function()

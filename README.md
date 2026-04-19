@@ -65,6 +65,7 @@ require("runic").setup({
 - `vim.g.runic_python_project_runner = true`
 - `vim.g.runic_focus_terminal = true`
 - `vim.g.runic_use_snacks_terminal = true`
+- `vim.g.runic_open_url = true`
 
 ## Commands
 
