@@ -108,7 +108,7 @@ local defaults = {
     },
     stress = {
       timeout_ms = 2000,
-      max_cases = 1000,
+      max_cases = 500,
       save_counterexample = true,
     },
     check = {
@@ -1304,7 +1304,7 @@ function M.action(opts)
       return
     end
 
-    local selected, _, err = resolve_candidates({ mode = opts.mode or "auto", intent = choice.value })
+    local selected, _, err = resolve_candidates({ mode = opts.mode or "auto", intent = choice.value, no_cache = true })
     if not selected then
       vim.notify("Runic: " .. err, vim.log.levels.WARN)
       return
@@ -1927,7 +1927,7 @@ function M.cf_stress(opts)
     end
   end
 
-  local max_cases = tonumber(opts.max_cases) or tonumber(M.config.cf.stress.max_cases) or 1000
+  local max_cases = tonumber(opts.max_cases) or tonumber(M.config.cf.stress.max_cases) or 500
   local timeout_ms = tonumber(M.config.cf.stress.timeout_ms) or 2000
   local gen_bin = cf_stress_binary_path(root, "gen")
   local sol_bin = cf_stress_binary_path(root, "solution")

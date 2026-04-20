@@ -131,5 +131,5 @@ Auto-submit notes:
 
 Stress notes:
 
-- Default stress case count is 1000 (`cf.stress.max_cases`).
+- Default stress case count is 500 (`cf.stress.max_cases`).
 - For quick loops while coding, pass a smaller number in setup.
