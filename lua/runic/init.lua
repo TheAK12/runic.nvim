@@ -444,7 +444,7 @@ local function cf_compile_command(root, file)
   local std = prof.std or "gnu++17"
   local flags = prof.flags or {}
   local cmd_parts = {
-    "mkdir -p .runic-bin",
+    "mkdir -p .runic-bin &&",
     cxx,
     "-std=" .. std,
   }
@@ -466,7 +466,7 @@ local function cf_compile_command_to(root, file, out_path)
   local std = prof.std or "gnu++17"
   local flags = prof.flags or {}
   local cmd_parts = {
-    "mkdir -p .runic-bin",
+    "mkdir -p .runic-bin &&",
     cxx,
     "-std=" .. std,
   }
