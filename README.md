@@ -68,9 +68,6 @@ require("runic").setup({
     enabled = true,
     workspace_root = "~/codeforces",
     profile = "contest",
-    submit = {
-      auto_submit = false,
-    },
   },
 })
 ```
@@ -121,18 +118,10 @@ Notes:
 - `:RunicCFReplayFail` - reruns current solution on saved `counterexample.in`
 - `:RunicCFCheck` - pre-submit check alias (currently runs sample tests)
 - `:RunicCFSubmit` - opens Codeforces problem page for manual submit
-- `:RunicCFAutoSubmit` - experimental auto-submit using cookie env (enabled by default in current test branch)
-- `:RunicCFSetCookie` - stores Codeforces cookie header value for current Neovim session
 
 CF workspace note:
 
 - Watch/test/stress/submit target the configured solution file (`main.cpp` by default), not helper files like `stress/brute.cpp`.
-
-Auto-submit notes:
-
-- `cf.submit.auto_submit` is enabled by default in this branch. Set it to `false` to force manual mode.
-- Cookie can come from env var `cf.submit.cookie_env` (default: `RUNIC_CF_COOKIE`) or session command `:RunicCFSetCookie`.
-- If auto-submit fails, runic falls back to manual submit flow.
 
 Stress notes:
 

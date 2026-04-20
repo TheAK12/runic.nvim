@@ -14,7 +14,6 @@ local state = {
   cf_test_running = false,
   cf_test_pending = false,
   cf_profile = nil,
-  cf_cookie = nil,
 }
 
 local defaults = {
@@ -116,12 +115,6 @@ local defaults = {
       run_stress = false,
       stress_cases = 200,
     },
-    submit = {
-      auto_submit = true,
-      confirm = true,
-      language_id = "91",
-      cookie_env = "RUNIC_CF_COOKIE",
-    },
   },
 }
 
@@ -152,8 +145,6 @@ local command_names = {
   "RunicCFWatchStop",
   "RunicCFCheck",
   "RunicCFSubmit",
-  "RunicCFAutoSubmit",
-  "RunicCFSetCookie",
   "RunicCFStress",
   "RunicCFReplayFail",
 }
@@ -390,18 +381,6 @@ end
 
 local function cf_solution_path(root)
   return vim.fs.normalize(vim.fs.joinpath(root, cf_solution_relative_path(root)))
-end
-
-local function cf_cookie_value()
-  if type(state.cf_cookie) == "string" and state.cf_cookie ~= "" then
-    return state.cf_cookie
-  end
-  local cookie_env = M.config.cf.submit.cookie_env or "RUNIC_CF_COOKIE"
-  local cookie = os.getenv(cookie_env)
-  if type(cookie) == "string" and cookie ~= "" then
-    return cookie
-  end
-  return nil
 end
 
 local function cf_builtin_template()
@@ -2088,122 +2067,6 @@ function M.cf_submit()
   vim.notify("Opened Codeforces page for manual submit. Source: " .. source, vim.log.levels.INFO)
 end
 
-function M.cf_auto_submit()
-  if not M.config.cf.submit.auto_submit then
-    vim.notify("Auto submit disabled. Enable cf.submit.auto_submit in setup.", vim.log.levels.WARN)
-    return
-  end
-  local root, err = cf_root_for_current_buffer()
-  if not root then
-    vim.notify("Runic: " .. err, vim.log.levels.ERROR)
-    return
-  end
-
-  local meta = read_cf_meta(root)
-  if not meta or not meta.contest or not meta.problem then
-    vim.notify("CF metadata missing. Use RunicCFStart first.", vim.log.levels.ERROR)
-    return
-  end
-
-  if M.config.cf.submit.confirm then
-    local ans = vim.fn.confirm("Experimental auto submit to Codeforces?", "&Yes\n&No", 2)
-    if ans ~= 1 then
-      vim.notify("Auto submit cancelled", vim.log.levels.INFO)
-      return
-    end
-  end
-
-  local cookie_env = M.config.cf.submit.cookie_env or "RUNIC_CF_COOKIE"
-  local cookie = cf_cookie_value()
-  if not cookie or cookie == "" then
-    vim.notify("Missing Codeforces cookie. Set env " .. cookie_env .. " or use :RunicCFSetCookie. Falling back to manual submit.", vim.log.levels.WARN)
-    M.cf_submit()
-    return
-  end
-
-  local submit_url = string.format("https://codeforces.com/contest/%s/submit", tostring(meta.contest))
-  local source_path = cf_solution_path(root)
-  local source = read_file(source_path)
-  if not source or source == "" then
-    vim.notify("Could not read source file for submit: " .. source_path, vim.log.levels.ERROR)
-    return
-  end
-
-  local page = vim.fn.system({
-    "curl",
-    "-sL",
-    "-H",
-    "Cookie: " .. cookie,
-    submit_url,
-  })
-  if vim.v.shell_error ~= 0 then
-    vim.notify("Could not fetch submit page; falling back to manual submit", vim.log.levels.WARN)
-    M.cf_submit()
-    return
-  end
-
-  local csrf = page:match('name="csrf_token"%s+value="([^"]+)"')
-    or page:match('data%-csrf="([^"]+)"')
-    or page:match('X%-Csrf%-Token"%s+content="([^"]+)"')
-  if not csrf then
-    vim.notify("Could not parse csrf token; falling back to manual submit", vim.log.levels.WARN)
-    M.cf_submit()
-    return
-  end
-
-  local lang = M.config.cf.submit.language_id or "91"
-  local problem_index = tostring(meta.problem)
-
-  local res = vim.fn.system({
-    "curl",
-    "-sL",
-    "-X",
-    "POST",
-    "-H",
-    "Cookie: " .. cookie,
-    "-F",
-    "csrf_token=" .. csrf,
-    "-F",
-    "ftaa=",
-    "-F",
-    "bfaa=",
-    "-F",
-    "action=submitSolutionFormSubmitted",
-    "-F",
-    "submittedProblemIndex=" .. problem_index,
-    "-F",
-    "programTypeId=" .. tostring(lang),
-    "-F",
-    "source=" .. source,
-    submit_url,
-  })
-
-  if vim.v.shell_error ~= 0 then
-    vim.notify("Auto submit request failed. Falling back to manual submit", vim.log.levels.WARN)
-    M.cf_submit()
-    return
-  end
-
-  if res:match("error") or res:match("invalid") then
-    vim.notify("Auto submit returned an error. Check session/cookies. Falling back to manual submit.", vim.log.levels.WARN)
-    M.cf_submit()
-    return
-  end
-
-  vim.notify("Auto submit request sent (experimental). Check My Submissions.", vim.log.levels.INFO)
-end
-
-function M.cf_set_cookie()
-  local prompt = "Codeforces cookie header value: "
-  local cookie = vim.fn.inputsecret(prompt)
-  if type(cookie) ~= "string" or cookie == "" then
-    vim.notify("Runic: cookie not updated", vim.log.levels.WARN)
-    return
-  end
-  state.cf_cookie = cookie
-  vim.notify("Runic: CF cookie stored for current Neovim session", vim.log.levels.INFO)
-end
-
 register_commands = function()
   local specs = {
     { "RunicRun", function() M.run({ mode = "auto" }) end, "Run best runic candidate" },
@@ -2236,8 +2099,6 @@ register_commands = function()
     { "RunicCFReplayFail", M.cf_replay_fail, "Replay last stress counterexample" },
     { "RunicCFCheck", M.cf_check, "Run pre-submit checks" },
     { "RunicCFSubmit", M.cf_submit, "Open problem page for manual submit" },
-    { "RunicCFAutoSubmit", M.cf_auto_submit, "Experimental auto submit" },
-    { "RunicCFSetCookie", M.cf_set_cookie, "Set CF cookie for this session" },
   }
 
   for _, spec in ipairs(specs) do

@@ -12,15 +12,12 @@
 - add CF-specific C++ runner priority when in a runic CF workspace
 - add built-in CP C++ template generation for new CF problems
 - add stress-testing workflow (`RunicCFStress`, `RunicCFReplayFail`) with counterexample persistence
-- add experimental auto-submit path with cookie-based session fallback to manual submit
 - make CF watch non-blocking by running sample tests asynchronously with debounced pending rerun
 - make CF stress loop non-blocking by chunking cases across scheduler ticks
 - reduce default CF stress max cases from 10000 to 1000 for better out-of-box responsiveness
 - make `RunicAction` bypass cache for CF intents to avoid stale command selection
 - reduce default CF stress max cases from 1000 to 500 for faster feedback loops
 - make CF watch/test/stress/submit consistently use the configured solution file (default: main.cpp)
-- enable experimental CF auto-submit by default on this feature branch for testing
-- add `RunicCFSetCookie` for in-session cookie input and improve missing-cookie guidance for auto-submit fallback
 
 ## v0.2.2
 
