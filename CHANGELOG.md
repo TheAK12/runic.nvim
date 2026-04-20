@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased (feat/runic-cf-mode)
+
+- add first complete Codeforces workflow:
+  - workspace bootstrap via `RunicCFStart`
+  - contest/debug profile switching via `RunicCFProfile`
+  - clipboard sample import via `RunicCFImportSamples`
+  - sample execution via `RunicCFTest`
+  - watch-on-save mode via `RunicCFWatch`
+  - pre-submit and manual submit helpers (`RunicCFCheck`, `RunicCFSubmit`)
+- add CF-specific C++ runner priority when in a runic CF workspace
+- add built-in CP C++ template generation for new CF problems
+- add stress-testing workflow (`RunicCFStress`, `RunicCFReplayFail`) with counterexample persistence
+- add experimental auto-submit path with cookie-based session fallback to manual submit
+
 ## v0.2.2
 
 - add `:RunicAction` intent picker (`run`, `test`, `build`, `dev`) with per-project preference memory

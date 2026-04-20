@@ -20,6 +20,7 @@ Module name:
 - Toolchain diagnostics (`:RunicHealth`)
 - Override hooks (`vim.g.runic_command`, `vim.g.runic_filetype_commands`, `vim.g.runic_resolver`)
 - Root detection follows the current file path (works even when current working directory is elsewhere)
+- Codeforces mode with dedicated workspace, profile switching, sample testing, and watch mode
 
 ## Install (vim.pack)
 
@@ -59,6 +60,21 @@ require("runic").setup({
 })
 ```
 
+Codeforces-focused setup example:
+
+```lua
+require("runic").setup({
+  cf = {
+    enabled = true,
+    workspace_root = "~/codeforces",
+    profile = "contest",
+    submit = {
+      auto_submit = false,
+    },
+  },
+})
+```
+
 ## Global overrides
 
 - `vim.g.runic_command = "<cmd>"`
@@ -91,3 +107,24 @@ Notes:
 - `:RunicReload` - reapplies setup/options without restarting Neovim
 - `:RunicStop` - stops the active runic process
 - `:RunicRestart` - stops active run and reruns last command
+
+## Codeforces Commands
+
+- `:RunicCFStart <contestId> <problemIndex>` - creates/opens workspace under `~/codeforces`
+- `:RunicCFModeOn` / `:RunicCFModeOff` - enable/disable CF-specific runner logic
+- `:RunicCFStatus` - shows current CF mode/profile/workspace details
+- `:RunicCFProfile <contest|debug>` - switches compile profile
+- `:RunicCFImportSamples` - imports `Input/Output` sample blocks from clipboard
+- `:RunicCFTest` - compiles and runs all sample tests in `samples/*.in`
+- `:RunicCFWatch` / `:RunicCFWatchStop` - auto-run samples on save
+- `:RunicCFStress` - runs generator/brute/solution stress loop and saves counterexample
+- `:RunicCFReplayFail` - reruns current solution on saved `counterexample.in`
+- `:RunicCFCheck` - pre-submit check alias (currently runs sample tests)
+- `:RunicCFSubmit` - opens Codeforces problem page for manual submit
+- `:RunicCFAutoSubmit` - experimental auto-submit using cookie env (disabled by default)
+
+Auto-submit notes:
+
+- Requires `cf.submit.auto_submit = true` in setup.
+- Requires env var from `cf.submit.cookie_env` (default: `RUNIC_CF_COOKIE`) containing valid Codeforces cookie header content.
+- If auto-submit fails, runic falls back to manual submit flow.

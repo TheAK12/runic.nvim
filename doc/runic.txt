@@ -77,6 +77,42 @@ COMMANDS                                                         *runic-commands
     :RunicRestart
         Stop active process and rerun last command.
 
+    :RunicCFStart <contestId> <problemIndex>
+        Create/open a Codeforces workspace under configured root.
+
+    :RunicCFModeOn / :RunicCFModeOff
+        Enable/disable Codeforces-specialized run behavior.
+
+    :RunicCFStatus
+        Show current Codeforces mode/profile/workspace status.
+
+    :RunicCFProfile <contest|debug>
+        Switch C++ compile profile for Codeforces mode.
+
+    :RunicCFImportSamples
+        Import Input/Output samples from clipboard text.
+
+    :RunicCFTest
+        Compile and run all sample tests in the workspace.
+
+    :RunicCFWatch / :RunicCFWatchStop
+        Enable/disable sample test on save.
+
+    :RunicCFStress
+        Run generator/brute/solution stress test loop.
+
+    :RunicCFReplayFail
+        Replay current solution on saved counterexample input.
+
+    :RunicCFCheck
+        Run pre-submit checks (sample tests for now).
+
+    :RunicCFSubmit
+        Open Codeforces problem page for manual submit.
+
+    :RunicCFAutoSubmit
+        Experimental submission path (disabled by default).
+
 ==============================================================================
 GLOBALS                                                           *runic-globals*
 
@@ -100,6 +136,15 @@ GLOBALS                                                           *runic-globals
 
     g:runic_open_url
         When true, open detected http/https URLs in the default browser.
+
+    cf.workspace_root
+        Root directory for Codeforces workspaces (default: ~/codeforces).
+
+    cf.profiles
+        Contest/debug compile profiles for C++ mode.
+
+    cf.submit.cookie_env
+        Env var containing Codeforces cookie header value for experimental auto-submit.
 
     terminal.url_allowlist
         Setup option. URL auto-open only opens hosts in this list.
