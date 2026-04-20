@@ -121,7 +121,7 @@ Notes:
 - `:RunicCFReplayFail` - reruns current solution on saved `counterexample.in`
 - `:RunicCFCheck` - pre-submit check alias (currently runs sample tests)
 - `:RunicCFSubmit` - opens Codeforces problem page for manual submit
-- `:RunicCFAutoSubmit` - experimental auto-submit using cookie env (disabled by default)
+- `:RunicCFAutoSubmit` - experimental auto-submit using cookie env (enabled by default in current test branch)
 
 CF workspace note:
 
@@ -129,7 +129,7 @@ CF workspace note:
 
 Auto-submit notes:
 
-- Requires `cf.submit.auto_submit = true` in setup.
+- `cf.submit.auto_submit` is enabled by default in this branch. Set it to `false` to force manual mode.
 - Requires env var from `cf.submit.cookie_env` (default: `RUNIC_CF_COOKIE`) containing valid Codeforces cookie header content.
 - If auto-submit fails, runic falls back to manual submit flow.
 

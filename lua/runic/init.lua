@@ -116,7 +116,7 @@ local defaults = {
       stress_cases = 200,
     },
     submit = {
-      auto_submit = false,
+      auto_submit = true,
       confirm = true,
       language_id = "91",
       cookie_env = "RUNIC_CF_COOKIE",

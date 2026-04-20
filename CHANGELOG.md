@@ -19,6 +19,7 @@
 - make `RunicAction` bypass cache for CF intents to avoid stale command selection
 - reduce default CF stress max cases from 1000 to 500 for faster feedback loops
 - make CF watch/test/stress/submit consistently use the configured solution file (default: main.cpp)
+- enable experimental CF auto-submit by default on this feature branch for testing
 
 ## v0.2.2
 
