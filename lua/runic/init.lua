@@ -1485,7 +1485,8 @@ end
 local function cf_run_sample_once(root, file, input_path)
   local run_cmd = cf_run_command(root, file)
   local timeout = tonumber(M.config.cf.sample.timeout_ms) or 3000
-  local cmd = string.format("timeout %dms %s < %s", timeout, run_cmd, shellescape(input_path))
+  local timeout_sec = math.max(1, math.floor((timeout + 999) / 1000))
+  local cmd = string.format("timeout %ss %s < %s", tostring(timeout_sec), run_cmd, shellescape(input_path))
   return vim.fn.system({ vim.o.shell, "-lc", cmd })
 end
 
