@@ -1222,7 +1222,17 @@ register_keymaps = function()
 end
 
 function M.reconfigure(opts)
-  M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), M.config, opts or {})
+  local notify_reconfigure = true
+  local merged_opts = opts or {}
+  if type(opts) == "table" then
+    merged_opts = vim.deepcopy(opts)
+    if merged_opts._notify ~= nil then
+      notify_reconfigure = merged_opts._notify == true
+    end
+    merged_opts._notify = nil
+  end
+
+  M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), M.config, merged_opts)
   state.cache_gen = state.cache_gen + 1
   state.cache = {}
 
@@ -1234,7 +1244,9 @@ function M.reconfigure(opts)
     register_keymaps()
   end
 
-  vim.notify("Runic reconfigured", vim.log.levels.INFO)
+  if notify_reconfigure then
+    vim.notify("Runic reconfigured", vim.log.levels.INFO)
+  end
   return M
 end
 
@@ -1243,7 +1255,16 @@ function M.setup(opts)
     setup_cache_autocmds()
     state.autocmd_setup = true
   end
-  return M.reconfigure(opts)
+
+  local setup_opts = opts or {}
+  if type(setup_opts) == "table" then
+    setup_opts = vim.deepcopy(setup_opts)
+    if setup_opts._notify == nil then
+      setup_opts._notify = false
+    end
+  end
+
+  return M.reconfigure(setup_opts)
 end
 
 return M
