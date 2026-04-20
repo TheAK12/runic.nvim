@@ -12,6 +12,7 @@ Module name:
 ## Features
 
 - Auto run (`:RunicRun`) from project/file context
+- Intent picker (`:RunicAction`) for run/test/build/dev flow
 - Candidate picker (`:RunicPick`)
 - Explain mode (`:RunicExplain`)
 - Last command rerun (`:RunicLast`)
@@ -68,9 +69,15 @@ require("runic").setup({
 - `vim.g.runic_use_snacks_terminal = true`
 - `vim.g.runic_open_url = true`
 
+Notes:
+
+- URL auto-open is allowlisted to `localhost`, `127.0.0.1`, and `::1` by default.
+- TypeScript single-file execution now prefers `tsx`, then `bun`, `deno`, and `ts-node`.
+
 ## Commands
 
 - `:RunicRun` - runs the top-ranked command for the current buffer
+- `:RunicAction` - pick intent (`run`, `test`, `build`, `dev`) and run best match
 - `:RunicPick` - opens a picker so you can choose which command to run
 - `:RunicRunFile` - ignores project rules and runs in file mode only
 - `:RunicRunProject` - ignores file rules and runs in project mode only
@@ -82,3 +89,5 @@ require("runic").setup({
 - `:RunicCacheInfo` - shows cache entry count, generation, hits, and misses
 - `:RunicHealth` - checks common language/tool executables on your system
 - `:RunicReload` - reapplies setup/options without restarting Neovim
+- `:RunicStop` - stops the active runic process
+- `:RunicRestart` - stops active run and reruns last command

@@ -7,6 +7,8 @@ local state = {
   cache_misses = 0,
   history = {},
   last = nil,
+  active_job = nil,
+  intent_preferences = {},
   keymaps = {},
 }
 
@@ -53,6 +55,7 @@ local defaults = {
     height = 12,
     close_keys = { "<Esc>", "q" },
     open_url = true,
+    url_allowlist = { "localhost", "127.0.0.1", "::1" },
   },
   history = {
     size = 20,
@@ -75,6 +78,7 @@ local defaults = {
 
 local command_names = {
   "RunicRun",
+  "RunicAction",
   "RunicPick",
   "RunicRunFile",
   "RunicRunProject",
@@ -86,6 +90,8 @@ local command_names = {
   "RunicCacheInfo",
   "RunicHealth",
   "RunicReload",
+  "RunicStop",
+  "RunicRestart",
 }
 
 local clear_commands
@@ -263,6 +269,20 @@ local function is_js_like(ctx)
     or ctx.ext == "tsx"
 end
 
+local function preferred_intent_for(ctx)
+  if not ctx or not ctx.root then
+    return nil
+  end
+  return state.intent_preferences[ctx.root]
+end
+
+local function set_preferred_intent(ctx, intent)
+  if not ctx or not ctx.root then
+    return
+  end
+  state.intent_preferences[ctx.root] = intent
+end
+
 local function run_in_terminal(cmd, cwd)
   if (M.config.terminal.use_snacks or vim.g.runic_use_snacks_terminal == true) and _G.Snacks and Snacks.terminal then
     Snacks.terminal({ "zsh", "-lc", cmd }, { cwd = cwd })
@@ -275,6 +295,7 @@ local function run_in_terminal(cmd, cwd)
   local term_buf = vim.api.nvim_get_current_buf()
   local focus_terminal = maybe(vim.g.runic_focus_terminal, M.config.terminal.focus)
   local open_url = maybe(vim.g.runic_open_url, M.config.terminal.open_url)
+  local url_allowlist = M.config.terminal.url_allowlist or {}
   local opened_urls = {}
   local url_tail = ""
 
@@ -297,8 +318,31 @@ local function run_in_terminal(cmd, cwd)
     end
   end
 
+  local function host_allowed(host)
+    if type(host) ~= "string" or host == "" then
+      return false
+    end
+    if #url_allowlist == 0 then
+      return true
+    end
+    for _, allowed in ipairs(url_allowlist) do
+      if host == allowed then
+        return true
+      end
+    end
+    return false
+  end
+
+  local function is_allowed_url(url)
+    local host = url:match("^https?://([^/%?:#]+)")
+    return host_allowed(host)
+  end
+
   local function open_in_browser(url)
     if opened_urls[url] then
+      return
+    end
+    if not is_allowed_url(url) then
       return
     end
     opened_urls[url] = true
@@ -413,6 +457,12 @@ local function run_in_terminal(cmd, cwd)
     vim.notify("Runic could not start terminal job", vim.log.levels.ERROR)
     return
   end
+
+  state.active_job = {
+    id = job,
+    cmd = cmd,
+    cwd = cwd,
+  }
 
   if focus_terminal then
     vim.cmd("startinsert")
@@ -633,6 +683,23 @@ local function add_project_candidates(ctx)
   return out
 end
 
+local function parse_java_package(file)
+  local ok, lines = pcall(vim.fn.readfile, file)
+  if not ok or type(lines) ~= "table" then
+    return nil
+  end
+  for _, line in ipairs(lines) do
+    local pkg = line:match("^%s*package%s+([%w_%.]+)%s*;%s*$")
+    if pkg then
+      return pkg
+    end
+    if line:match("^%s*import%s+") or line:match("^%s*public%s+") or line:match("^%s*class%s+") then
+      break
+    end
+  end
+  return nil
+end
+
 local function compile_and_run(file, compiler, out_name)
   local qfile = shellescape(file)
   local qout = shellescape(out_name)
@@ -670,7 +737,15 @@ local function add_file_candidates(ctx)
     jl = "julia " .. qfile,
     go = "go run " .. qfile,
     rs = "mkdir -p .nvim-run && rustc " .. qfile .. " -o " .. shellescape(out_bin) .. " && " .. shellescape(out_bin),
-    java = "javac " .. qfile .. " && java " .. shellescape(stem(file)),
+    java = (function()
+      local pkg = parse_java_package(file)
+      local class_name = stem(file)
+      if pkg then
+        local fqcn = pkg .. "." .. class_name
+        return "javac -d . " .. qfile .. " && java -cp . " .. shellescape(fqcn)
+      end
+      return "javac " .. qfile .. " && java " .. shellescape(class_name)
+    end)(),
     kt = "kotlinc -script " .. qfile,
     swift = "swift " .. qfile,
     nim = "nim c -r " .. qfile,
@@ -683,8 +758,18 @@ local function add_file_candidates(ctx)
     js = "node " .. qfile,
     mjs = "node " .. qfile,
     cjs = "node " .. qfile,
-    ts = has_exec("bun") and ("bun " .. qfile) or (has_exec("deno") and ("deno run " .. qfile) or ("node " .. qfile)),
-    tsx = has_exec("bun") and ("bun " .. qfile) or (has_exec("deno") and ("deno run " .. qfile) or ("node " .. qfile)),
+    ts = has_exec("tsx") and ("tsx " .. qfile)
+      or (has_exec("bun") and ("bun " .. qfile)
+      or (has_exec("deno") and ("deno run " .. qfile)
+      or (has_exec("ts-node") and ("ts-node " .. qfile)
+      or (has_exec("node") and ("node --loader ts-node/esm " .. qfile)
+      or nil)))),
+    tsx = has_exec("tsx") and ("tsx " .. qfile)
+      or (has_exec("bun") and ("bun " .. qfile)
+      or (has_exec("deno") and ("deno run " .. qfile)
+      or (has_exec("ts-node") and ("ts-node " .. qfile)
+      or (has_exec("node") and ("node --loader ts-node/esm " .. qfile)
+      or nil)))),
   }
 
   if not is_rule_disabled("file_ext") and by_ext[ext] then
@@ -759,9 +844,14 @@ end
 local function resolve_candidates(opts)
   opts = opts or {}
   local mode = opts.mode or "auto"
+  local intent = opts.intent
   local ctx, err = build_context(opts)
   if not ctx then
     return nil, nil, err
+  end
+
+  if not intent then
+    intent = preferred_intent_for(ctx)
   end
 
   local key = make_cache_key(ctx, mode)
@@ -789,6 +879,33 @@ local function resolve_candidates(opts)
 
   if #candidates == 0 then
     return nil, nil, "No runic rule matched this file/project"
+  end
+
+  if type(intent) == "string" and intent ~= "" then
+    local filtered = {}
+    for _, c in ipairs(candidates) do
+      local cmd = c.command:lower()
+      if intent == "run" then
+        if not cmd:match("%f[%a]test%f[%A]") and not cmd:match("%f[%a]build%f[%A]") then
+          filtered[#filtered + 1] = c
+        end
+      elseif intent == "test" then
+        if cmd:match("%f[%a]test%f[%A]") then
+          filtered[#filtered + 1] = c
+        end
+      elseif intent == "build" then
+        if cmd:match("%f[%a]build%f[%A]") or cmd:match("%f[%a]cmake%f[%A]") or cmd:match("%f[%a]make%f[%A]") then
+          filtered[#filtered + 1] = c
+        end
+      elseif intent == "dev" then
+        if cmd:match("%f[%a]dev%f[%A]") or cmd:match("%f[%a]serve%f[%A]") or cmd:match("http%.server") then
+          filtered[#filtered + 1] = c
+        end
+      end
+    end
+    if #filtered > 0 then
+      candidates = filtered
+    end
   end
 
   sort_candidates(candidates)
@@ -857,6 +974,38 @@ function M.run(opts)
   end
 end
 
+function M.action(opts)
+  opts = opts or {}
+  local intents = {
+    { label = "Run", value = "run" },
+    { label = "Test", value = "test" },
+    { label = "Build", value = "build" },
+    { label = "Dev", value = "dev" },
+  }
+
+  vim.ui.select(intents, {
+    prompt = "Runic action",
+    format_item = function(item)
+      return item.label
+    end,
+  }, function(choice)
+    if not choice then
+      return
+    end
+
+    local selected, _, err = resolve_candidates({ mode = opts.mode or "auto", intent = choice.value })
+    if not selected then
+      vim.notify("Runic: " .. err, vim.log.levels.WARN)
+      return
+    end
+
+    set_preferred_intent(selected.ctx, choice.value)
+    state.last = selected
+    add_history(selected)
+    run_in_terminal(selected.command, selected.cwd)
+  end)
+end
+
 function M.pick(opts)
   local _, candidates, err = resolve_candidates(opts)
   if not candidates then
@@ -884,6 +1033,30 @@ function M.run_last()
     vim.notify("Runic: nothing to rerun", vim.log.levels.WARN)
     return
   end
+  run_in_terminal(state.last.command, state.last.cwd)
+end
+
+function M.stop()
+  local active = state.active_job
+  if not active or not active.id then
+    vim.notify("Runic: no active process", vim.log.levels.INFO)
+    return
+  end
+
+  local ok = vim.fn.jobstop(active.id)
+  if ok == 1 then
+    vim.notify("Runic stopped active process", vim.log.levels.INFO)
+  else
+    vim.notify("Runic failed to stop active process", vim.log.levels.WARN)
+  end
+end
+
+function M.restart_last()
+  if not state.last then
+    vim.notify("Runic: nothing to restart", vim.log.levels.WARN)
+    return
+  end
+  M.stop()
   run_in_terminal(state.last.command, state.last.cwd)
 end
 
@@ -984,6 +1157,7 @@ end
 register_commands = function()
   local specs = {
     { "RunicRun", function() M.run({ mode = "auto" }) end, "Run best runic candidate" },
+    { "RunicAction", function() M.action({ mode = "auto" }) end, "Choose runic intent and run" },
     { "RunicPick", function() M.pick({ mode = "auto" }) end, "Pick runic candidate" },
     { "RunicRunFile", function() M.run({ mode = "file" }) end, "Runic file mode" },
     { "RunicRunProject", function() M.run({ mode = "project" }) end, "Runic project mode" },
@@ -995,6 +1169,8 @@ register_commands = function()
     { "RunicCacheInfo", M.cache_info, "Show runic cache stats" },
     { "RunicHealth", M.health, "Check runic toolchain health" },
     { "RunicReload", function() M.reconfigure() end, "Reapply runic setup" },
+    { "RunicStop", M.stop, "Stop active runic process" },
+    { "RunicRestart", M.restart_last, "Restart last runic command" },
   }
 
   for _, spec in ipairs(specs) do
