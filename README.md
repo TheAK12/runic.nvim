@@ -1,51 +1,40 @@
 # runic.nvim
 
-Smart project/file runner for Neovim.
+`runic.nvim` is a Neovim runner that chooses a command based on the current file and project context.
 
-It detects project context, ranks candidate commands, runs the best one, and
-can pick from candidates when needed.
+Module name: `runic`
 
-Module name:
+## What it does
 
-- `runic`
+- Resolves both project-level and single-file commands.
+- Ranks candidates and runs the highest-priority match.
+- Lets you inspect or override the decision when needed.
+- Supports a dedicated Codeforces workflow for C++ practice.
 
-## Features
+## Installation
 
-- Auto run (`:RunicRun`) from project/file context
-- Intent picker (`:RunicAction`) for run/test/build/dev flow
-- Candidate picker (`:RunicPick`)
-- Explain mode (`:RunicExplain`)
-- Last command rerun (`:RunicLast`)
-- Cache controls (`:RunicCacheClear`, `:RunicCacheInfo`)
-- Toolchain diagnostics (`:RunicHealth`)
-- Override hooks (`vim.g.runic_command`, `vim.g.runic_filetype_commands`, `vim.g.runic_resolver`)
-- Root detection follows the current file path (works even when current working directory is elsewhere)
-- Codeforces mode with dedicated workspace, profile switching, sample testing, and watch mode
-
-## Install (vim.pack)
+### vim.pack
 
 ```lua
 vim.pack.add({
   { src = "https://github.com/TheAK12/runic.nvim" },
 })
+
 vim.cmd.packadd("runic.nvim")
 require("runic").setup({})
 ```
 
-## Install (lazy.nvim)
+### lazy.nvim
 
 ```lua
 {
   "TheAK12/runic.nvim",
   main = "runic",
-  opts = {
-    create_commands = true,
-    create_keymaps = true,
-  },
+  opts = {},
 }
 ```
 
-## Setup
+## Quick start
 
 ```lua
 require("runic").setup({
@@ -60,20 +49,151 @@ require("runic").setup({
 })
 ```
 
-Codeforces-focused setup example:
+Use:
+
+- `:RunicRun` to run the top-ranked candidate
+- `:RunicPreview` to inspect why it chose that command
+
+## How command selection works
+
+`runic` uses a ranked rule list:
+
+1. Build context from current buffer.
+2. Detect root from markers near the file, then LSP root, then file directory.
+3. Generate candidates from:
+   - overrides
+   - project rules (`Cargo.toml`, `go.mod`, `package.json`, etc.)
+   - file rules (`python file.py`, `rustc file.rs`, `g++ file.cpp`, etc.)
+4. Sort by priority and run the top candidate.
+
+If you want to force behavior:
+
+- `:RunicRunProject` for project-only resolution
+- `:RunicRunFile` for file-only resolution
+
+## Commands
+
+### Core
+
+- `:RunicRun` run top-ranked command
+- `:RunicAction` choose intent (`run`, `test`, `build`, `dev`) and execute
+- `:RunicPick` choose from ranked candidates
+- `:RunicRunFile` force file-mode
+- `:RunicRunProject` force project-mode
+- `:RunicPreview` show selection details
+- `:RunicExplain` alias of `RunicPreview`
+- `:RunicLast` rerun last command
+- `:RunicHistory` pick from command history
+- `:RunicCacheClear` clear resolver cache
+- `:RunicCacheInfo` show cache stats
+- `:RunicHealth` check common toolchain executables
+- `:RunicReload` reapply setup without restart
+- `:RunicStop` stop active process
+- `:RunicRestart` restart last command
+
+### Codeforces
+
+- `:RunicCFStart <contestId> <problemIndex>` create/open workspace
+- `:RunicCFModeOn` / `:RunicCFModeOff` toggle CF mode
+- `:RunicCFStatus` show CF status
+- `:RunicCFProfile <contest|debug>` switch compile profile
+- `:RunicCFImportSamples` import samples from clipboard
+- `:RunicCFTest` run sample tests
+- `:RunicCFWatch` / `:RunicCFWatchStop` test on save
+- `:RunicCFStress` run stress test (gen vs brute vs solution)
+- `:RunicCFReplayFail` rerun on saved counterexample
+- `:RunicCFCheck` run pre-submit checks
+- `:RunicCFSubmit` open manual submit page
+
+## Codeforces workflow
+
+Recommended flow:
+
+1. `:RunicCFStart 1234 A`
+2. Paste samples and run `:RunicCFImportSamples`
+3. Run `:RunicCFTest`
+4. Enable watch with `:RunicCFWatch` while coding
+5. Use `:RunicCFStress` if you have `stress/gen.cpp` and `stress/brute.cpp`
+6. Use `:RunicCFSubmit` for manual submit
+
+Workspace layout:
+
+```text
+~/codeforces/<contest>/<problem>/
+  main.cpp
+  notes.md
+  samples/
+  stress/gen.cpp
+  stress/brute.cpp
+  .runic-cf.json
+  .runic-bin/
+```
+
+Notes:
+
+- `watch/test/stress/submit` operate on configured solution file (`main.cpp` by default).
+- `cf.chdir_on_start` controls cwd switch only when `:RunicCFStart` runs.
+
+## Configuration
+
+### Common options
+
+```lua
+require("runic").setup({
+  create_commands = true,
+  create_keymaps = true,
+  keymaps = {
+    run = "<leader>r",
+    pick = "<leader>rp",
+    last = "<leader>rl",
+    legacy = "<leader>R",
+  },
+  root = {
+    use_lsp = true,
+    resolver = nil,
+    markers = { ".git", "package.json", "pyproject.toml", "Cargo.toml", "go.mod" },
+  },
+  terminal = {
+    use_snacks = false,
+    focus = true,
+    height = 12,
+    close_keys = { "<Esc>", "q" },
+    open_url = true,
+    url_allowlist = { "localhost", "127.0.0.1", "::1" },
+  },
+})
+```
+
+### Codeforces options
 
 ```lua
 require("runic").setup({
   cf = {
     enabled = true,
     workspace_root = "~/codeforces",
-    chdir_on_start = "tab",
+    chdir_on_start = "tab", -- "tab" | "window" | "global" | false
     profile = "contest",
+    sample = {
+      auto_watch = false,
+      dir = "samples",
+      timeout_ms = 3000,
+    },
+    stress = {
+      timeout_ms = 2000,
+      max_cases = 500,
+      save_counterexample = true,
+    },
+    check = {
+      run_stress = false,
+      stress_cases = 200,
+    },
   },
 })
 ```
 
-## Global overrides
+## Overrides
+
+You can override command selection with globals:
 
 - `vim.g.runic_command = "<cmd>"`
 - `vim.g.runic_filetype_commands = { python = "...", go = "..." }`
@@ -83,49 +203,14 @@ require("runic").setup({
 - `vim.g.runic_use_snacks_terminal = true`
 - `vim.g.runic_open_url = true`
 
-Notes:
+## Troubleshooting
 
-- URL auto-open is allowlisted to `localhost`, `127.0.0.1`, and `::1` by default.
-- TypeScript single-file execution now prefers `tsx`, then `bun`, `deno`, and `ts-node`.
+- Run `:RunicPreview` to inspect selection and candidate list.
+- Run `:RunicCacheClear` after changing project files or config.
+- Run `:RunicHealth` if a toolchain command fails.
+- If root detection is wrong, configure `root.markers` or `root.resolver`.
 
-## Commands
+## Help and license
 
-- `:RunicRun` - runs the top-ranked command for the current buffer
-- `:RunicAction` - pick intent (`run`, `test`, `build`, `dev`) and run best match
-- `:RunicPick` - opens a picker so you can choose which command to run
-- `:RunicRunFile` - ignores project rules and runs in file mode only
-- `:RunicRunProject` - ignores file rules and runs in project mode only
-- `:RunicPreview` - shows selected command, working directory, and top candidates
-- `:RunicExplain` - alias of `:RunicPreview`
-- `:RunicLast` - reruns the last command executed by runic
-- `:RunicHistory` - shows recent runic commands and lets you rerun one
-- `:RunicCacheClear` - clears cached resolution results
-- `:RunicCacheInfo` - shows cache entry count, generation, hits, and misses
-- `:RunicHealth` - checks common language/tool executables on your system
-- `:RunicReload` - reapplies setup/options without restarting Neovim
-- `:RunicStop` - stops the active runic process
-- `:RunicRestart` - stops active run and reruns last command
-
-## Codeforces Commands
-
-- `:RunicCFStart <contestId> <problemIndex>` - creates/opens workspace under `~/codeforces`
-- `:RunicCFModeOn` / `:RunicCFModeOff` - enable/disable CF-specific runner logic
-- `:RunicCFStatus` - shows current CF mode/profile/workspace details
-- `:RunicCFProfile <contest|debug>` - switches compile profile
-- `:RunicCFImportSamples` - imports `Input/Output` sample blocks from clipboard
-- `:RunicCFTest` - compiles and runs all sample tests in `samples/*.in`
-- `:RunicCFWatch` / `:RunicCFWatchStop` - auto-run samples on save
-- `:RunicCFStress` - runs generator/brute/solution stress loop and saves counterexample
-- `:RunicCFReplayFail` - reruns current solution on saved `counterexample.in`
-- `:RunicCFCheck` - pre-submit check alias (currently runs sample tests)
-- `:RunicCFSubmit` - opens Codeforces problem page for manual submit
-
-CF workspace note:
-
-- Watch/test/stress/submit target the configured solution file (`main.cpp` by default), not helper files like `stress/brute.cpp`.
-- `cf.chdir_on_start` controls cwd switch only for `RunicCFStart` (`"tab"` default, also `"window"`, `"global"`, or `false`).
-
-Stress notes:
-
-- Default stress case count is 500 (`cf.stress.max_cases`).
-- For quick loops while coding, pass a smaller number in setup.
+- Vim help: `:h runic`
+- License: MIT
