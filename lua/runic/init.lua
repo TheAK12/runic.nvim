@@ -10,6 +10,10 @@ local state = {
   active_job = nil,
   intent_preferences = {},
   keymaps = {},
+  cf_watch_enabled = false,
+  cf_test_running = false,
+  cf_test_pending = false,
+  cf_profile = nil,
 }
 
 local defaults = {
@@ -47,6 +51,7 @@ local defaults = {
       "composer.json",
       "Gemfile",
       "flake.nix",
+      ".runic-cf.json",
     },
   },
   terminal = {
@@ -74,6 +79,44 @@ local defaults = {
     on_before_run = nil,
     on_after_run = nil,
   },
+  cf = {
+    enabled = false,
+    workspace_root = "~/codeforces",
+    chdir_on_start = "tab",
+    profile = "contest",
+    profiles = {
+      contest = {
+        cxx = "g++",
+        std = "gnu++17",
+        flags = { "-O2", "-pipe", "-Wall", "-Wextra" },
+        local_define = false,
+      },
+      debug = {
+        cxx = "g++",
+        std = "gnu++20",
+        flags = { "-O0", "-g", "-Wall", "-Wextra", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-D_GLIBCXX_DEBUG" },
+        local_define = true,
+      },
+    },
+    template = {
+      source = "builtin",
+      custom_path = nil,
+    },
+    sample = {
+      auto_watch = false,
+      dir = "samples",
+      timeout_ms = 3000,
+    },
+    stress = {
+      timeout_ms = 2000,
+      max_cases = 500,
+      save_counterexample = true,
+    },
+    check = {
+      run_stress = false,
+      stress_cases = 200,
+    },
+  },
 }
 
 local command_names = {
@@ -92,6 +135,19 @@ local command_names = {
   "RunicReload",
   "RunicStop",
   "RunicRestart",
+  "RunicCFStart",
+  "RunicCFModeOn",
+  "RunicCFModeOff",
+  "RunicCFStatus",
+  "RunicCFProfile",
+  "RunicCFImportSamples",
+  "RunicCFTest",
+  "RunicCFWatch",
+  "RunicCFWatchStop",
+  "RunicCFCheck",
+  "RunicCFSubmit",
+  "RunicCFStress",
+  "RunicCFReplayFail",
 }
 
 local clear_commands
@@ -267,6 +323,220 @@ local function is_js_like(ctx)
     or ctx.ext == "cjs"
     or ctx.ext == "ts"
     or ctx.ext == "tsx"
+end
+
+local function read_file(path)
+  local ok, lines = pcall(vim.fn.readfile, path)
+  if not ok then
+    return nil
+  end
+  return table.concat(lines, "\n")
+end
+
+local function write_file(path, content)
+  local dir = vim.fs.dirname(path)
+  vim.fn.mkdir(dir, "p")
+  vim.fn.writefile(vim.split(content, "\n", { plain = true }), path)
+end
+
+local function expand_path(path)
+  return vim.fs.normalize(vim.fn.expand(path))
+end
+
+local function cf_apply_start_cwd(problem_root)
+  local mode = M.config.cf.chdir_on_start
+  if mode == nil or mode == false then
+    return
+  end
+  if mode == true then
+    mode = "tab"
+  end
+
+  local escaped = vim.fn.fnameescape(problem_root)
+  if mode == "tab" then
+    vim.cmd("tcd " .. escaped)
+  elseif mode == "window" then
+    vim.cmd("lcd " .. escaped)
+  elseif mode == "global" then
+    vim.cmd("cd " .. escaped)
+  end
+end
+
+local function is_cpp_file(file)
+  local ext = vim.fn.fnamemodify(file, ":e"):lower()
+  return ext == "cpp" or ext == "cc" or ext == "cxx"
+end
+
+local function is_cf_workspace(root)
+  local marker = vim.fs.joinpath(root, ".runic-cf.json")
+  return file_exists(marker)
+end
+
+local function read_cf_meta(root)
+  local marker = vim.fs.joinpath(root, ".runic-cf.json")
+  local content = read_file(marker)
+  if not content then
+    return nil
+  end
+  local ok, data = pcall(vim.json.decode, content)
+  if not ok or type(data) ~= "table" then
+    return nil
+  end
+  return data
+end
+
+local function write_cf_meta(root, data)
+  local marker = vim.fs.joinpath(root, ".runic-cf.json")
+  write_file(marker, vim.json.encode(data))
+end
+
+local function cf_solution_relative_path(root)
+  local meta = read_cf_meta(root) or {}
+  local rel = meta.solution_file
+  if type(rel) ~= "string" or rel == "" then
+    rel = "main.cpp"
+  end
+  return rel
+end
+
+local function cf_solution_path(root)
+  return vim.fs.normalize(vim.fs.joinpath(root, cf_solution_relative_path(root)))
+end
+
+local function cf_builtin_template()
+  return table.concat({
+    "#include <bits/stdc++.h>",
+    "using namespace std;",
+    "",
+    "using ll = long long;",
+    "using pii = pair<int, int>;",
+    "using vi = vector<int>;",
+    "",
+    "#ifdef LOCAL",
+    "template <class T> void dbg_out(const char* name, const T& value) { cerr << name << \" = \" << value << '\\n'; }",
+    "#define DBG(x) dbg_out(#x, x)",
+    "#else",
+    "#define DBG(x) ((void)0)",
+    "#endif",
+    "",
+    "void solve() {",
+    "  ",
+    "}",
+    "",
+    "int main() {",
+    "  ios::sync_with_stdio(false);",
+    "  cin.tie(nullptr);",
+    "",
+    "  int t = 1;",
+    "  // cin >> t;",
+    "  while (t--) solve();",
+    "  return 0;",
+    "}",
+    "",
+  }, "\n")
+end
+
+local function cf_template_content()
+  local source = M.config.cf.template.source
+  local custom = M.config.cf.template.custom_path
+  if source == "custom" and type(custom) == "string" and custom ~= "" then
+    local c = read_file(expand_path(custom))
+    if c and c ~= "" then
+      return c
+    end
+  end
+  return cf_builtin_template()
+end
+
+local function current_cf_profile_name()
+  return state.cf_profile or M.config.cf.profile or "contest"
+end
+
+local function current_cf_profile()
+  local name = current_cf_profile_name()
+  return M.config.cf.profiles[name] or M.config.cf.profiles.contest
+end
+
+local function cf_binary_path(root, file)
+  local base = stem(file)
+  return vim.fs.joinpath(root, ".runic-bin", base)
+end
+
+local function cf_stress_binary_path(root, name)
+  return vim.fs.joinpath(root, ".runic-bin", "stress-" .. name)
+end
+
+local function cf_compile_command(root, file)
+  local prof = current_cf_profile()
+  local cxx = prof.cxx or "g++"
+  local std = prof.std or "gnu++17"
+  local flags = prof.flags or {}
+  local cmd_parts = {
+    "mkdir -p .runic-bin &&",
+    cxx,
+    "-std=" .. std,
+  }
+  for _, fl in ipairs(flags) do
+    cmd_parts[#cmd_parts + 1] = fl
+  end
+  if prof.local_define then
+    cmd_parts[#cmd_parts + 1] = "-DLOCAL"
+  end
+  cmd_parts[#cmd_parts + 1] = shellescape(file)
+  cmd_parts[#cmd_parts + 1] = "-o"
+  cmd_parts[#cmd_parts + 1] = shellescape(cf_binary_path(root, file))
+  return table.concat(cmd_parts, " ")
+end
+
+local function cf_compile_command_to(root, file, out_path)
+  local prof = current_cf_profile()
+  local cxx = prof.cxx or "g++"
+  local std = prof.std or "gnu++17"
+  local flags = prof.flags or {}
+  local cmd_parts = {
+    "mkdir -p .runic-bin &&",
+    cxx,
+    "-std=" .. std,
+  }
+  for _, fl in ipairs(flags) do
+    cmd_parts[#cmd_parts + 1] = fl
+  end
+  if prof.local_define then
+    cmd_parts[#cmd_parts + 1] = "-DLOCAL"
+  end
+  cmd_parts[#cmd_parts + 1] = shellescape(file)
+  cmd_parts[#cmd_parts + 1] = "-o"
+  cmd_parts[#cmd_parts + 1] = shellescape(out_path)
+  return table.concat(cmd_parts, " ")
+end
+
+local function cf_run_command(root, file)
+  local bin = cf_binary_path(root, file)
+  local compile = cf_compile_command(root, file)
+  return compile .. " && " .. shellescape(bin)
+end
+
+local function cf_samples_dir(root)
+  return vim.fs.joinpath(root, M.config.cf.sample.dir or "samples")
+end
+
+local function list_sample_inputs(root)
+  local dir = cf_samples_dir(root)
+  local inputs = vim.fs.find(function(name)
+    return name:match("%.in$") ~= nil
+  end, { path = dir, type = "file", limit = math.huge })
+  table.sort(inputs)
+  return inputs
+end
+
+local function read_trimmed(path)
+  local content = read_file(path)
+  if not content then
+    return nil
+  end
+  content = content:gsub("\r", "")
+  content = content:gsub("%s+$", "")
+  return content
 end
 
 local function preferred_intent_for(ctx)
@@ -490,6 +760,30 @@ local function setup_cache_autocmds()
       state.cache = {}
     end,
   })
+
+  vim.api.nvim_create_autocmd("BufWritePost", {
+    group = vim.api.nvim_create_augroup("runic-cf-watch", { clear = true }),
+    callback = function(args)
+      if not state.cf_watch_enabled then
+        return
+      end
+      local file = vim.api.nvim_buf_get_name(args.buf)
+      if file == "" or not is_cpp_file(file) then
+        return
+      end
+      local root, source = detect_root(args.buf, file)
+      if source and is_cf_workspace(root) then
+        local saved = vim.fs.normalize(file)
+        local solution = cf_solution_path(root)
+        if saved ~= solution then
+          return
+        end
+        vim.schedule(function()
+          M.cf_test_async()
+        end)
+      end
+    end,
+  })
 end
 
 local function add_override_candidates(ctx)
@@ -562,6 +856,30 @@ local function add_project_candidates(ctx)
   local out = {}
   local root = ctx.root
   local file = ctx.file
+
+  if M.config.cf.enabled and is_cpp_file(file) and is_cf_workspace(root) and not is_rule_disabled("project_cf") then
+    local run_cmd = cf_run_command(root, file)
+    local inputs = list_sample_inputs(root)
+    local has_samples = #inputs > 0
+    out[#out + 1] = candidate("project_cf", {
+      kind = "project",
+      priority = 9800,
+      command = run_cmd,
+      cwd = root,
+      reason = "Codeforces contest run",
+    })
+
+    if has_samples then
+      local first = shellescape(inputs[1])
+      out[#out + 1] = candidate("project_cf", {
+        kind = "project",
+        priority = 9750,
+        command = run_cmd .. " < " .. first,
+        cwd = root,
+        reason = "Codeforces sample test (first case)",
+      })
+    end
+  end
 
   if not is_rule_disabled("project_node") and is_js_like(ctx) and has_file(root, "package.json") then
     local pm = default_pm(root)
@@ -976,12 +1294,25 @@ end
 
 function M.action(opts)
   opts = opts or {}
-  local intents = {
-    { label = "Run", value = "run" },
-    { label = "Test", value = "test" },
-    { label = "Build", value = "build" },
-    { label = "Dev", value = "dev" },
-  }
+  local ctx, _ = build_context({ bufnr = 0 })
+  local in_cf = ctx and is_cf_workspace(ctx.root) and is_cpp_file(ctx.file)
+
+  local intents
+  if in_cf then
+    intents = {
+      { label = "Run", value = "run" },
+      { label = "Test", value = "test" },
+      { label = "Check", value = "check" },
+      { label = "Submit", value = "submit" },
+    }
+  else
+    intents = {
+      { label = "Run", value = "run" },
+      { label = "Test", value = "test" },
+      { label = "Build", value = "build" },
+      { label = "Dev", value = "dev" },
+    }
+  end
 
   vim.ui.select(intents, {
     prompt = "Runic action",
@@ -993,7 +1324,18 @@ function M.action(opts)
       return
     end
 
-    local selected, _, err = resolve_candidates({ mode = opts.mode or "auto", intent = choice.value })
+    if in_cf and choice.value == "check" then
+      M.cf_check()
+      set_preferred_intent(ctx, choice.value)
+      return
+    end
+    if in_cf and choice.value == "submit" then
+      M.cf_submit()
+      set_preferred_intent(ctx, choice.value)
+      return
+    end
+
+    local selected, _, err = resolve_candidates({ mode = opts.mode or "auto", intent = choice.value, no_cache = true })
     if not selected then
       vim.notify("Runic: " .. err, vim.log.levels.WARN)
       return
@@ -1154,6 +1496,598 @@ function M.health()
   end
 end
 
+local function cf_root_for_current_buffer()
+  local ctx, err = build_context({ bufnr = 0 })
+  if not ctx then
+    return nil, err
+  end
+  if not is_cf_workspace(ctx.root) then
+    local found = vim.fs.find(".runic-cf.json", {
+      path = vim.fs.dirname(ctx.file),
+      upward = true,
+      limit = 1,
+    })
+    if #found > 0 then
+      return vim.fs.dirname(found[1]), nil
+    end
+    return nil, "Current file is not inside a runic CF workspace"
+  end
+  return ctx.root, nil
+end
+
+local function cf_run_sample_once(root, file, input_path)
+  local run_cmd = cf_run_command(root, file)
+  local timeout = tonumber(M.config.cf.sample.timeout_ms) or 3000
+  local timeout_sec = math.max(1, math.floor((timeout + 999) / 1000))
+  local cmd = string.format("timeout %ss %s < %s", tostring(timeout_sec), run_cmd, shellescape(input_path))
+  return vim.fn.system({ vim.o.shell, "-lc", cmd })
+end
+
+local function cf_build_test_state(root, file)
+  local sample_inputs = list_sample_inputs(root)
+  if #sample_inputs == 0 then
+    return nil, "No sample inputs found in " .. cf_samples_dir(root)
+  end
+
+  return {
+    root = root,
+    file = file,
+    sample_inputs = sample_inputs,
+    idx = 1,
+    passed = 0,
+    failed = 0,
+    first_fail = nil,
+  }, nil
+end
+
+local function cf_finish_test(st)
+  state.cf_test_running = false
+
+  if st.failed == 0 then
+    vim.notify(string.format("CF samples passed: %d/%d", st.passed, #st.sample_inputs), vim.log.levels.INFO)
+  else
+    local lines = {
+      string.format("CF samples failed: %d/%d", st.failed, #st.sample_inputs),
+      "first fail: " .. st.first_fail.input,
+      "expected:",
+      st.first_fail.expected,
+      "actual:",
+      st.first_fail.actual,
+    }
+    vim.notify(table.concat(lines, "\n"), vim.log.levels.WARN)
+  end
+
+  if state.cf_test_pending then
+    state.cf_test_pending = false
+    vim.defer_fn(function()
+      M.cf_test_async()
+    end, 100)
+  end
+end
+
+local function cf_test_step(st)
+  if st.idx > #st.sample_inputs then
+    cf_finish_test(st)
+    return
+  end
+
+  local input_path = st.sample_inputs[st.idx]
+  local got = cf_run_sample_once(st.root, st.file, input_path)
+  local out_path = input_path:gsub("%.in$", ".out")
+  local expected = read_trimmed(out_path)
+  local actual = (got or ""):gsub("\r", ""):gsub("%s+$", "")
+
+  if expected == nil then
+    st.passed = st.passed + 1
+  elseif expected == actual then
+    st.passed = st.passed + 1
+  else
+    st.failed = st.failed + 1
+    if not st.first_fail then
+      st.first_fail = { input = input_path, expected = expected, actual = actual }
+    end
+  end
+
+  st.idx = st.idx + 1
+  vim.schedule(function()
+    cf_test_step(st)
+  end)
+end
+
+function M.cf_start(opts)
+  opts = opts or {}
+  local contest = opts.contest
+  local problem = opts.problem
+  if type(contest) ~= "string" or contest == "" or type(problem) ~= "string" or problem == "" then
+    vim.notify("RunicCFStart usage: :RunicCFStart <contestId> <problemIndex>", vim.log.levels.ERROR)
+    return
+  end
+
+  local root = expand_path(M.config.cf.workspace_root)
+  local problem_root = vim.fs.joinpath(root, contest, problem)
+  local samples = cf_samples_dir(problem_root)
+  local stress_dir = vim.fs.joinpath(problem_root, "stress")
+
+  vim.fn.mkdir(problem_root, "p")
+  vim.fn.mkdir(samples, "p")
+  vim.fn.mkdir(stress_dir, "p")
+  vim.fn.mkdir(vim.fs.joinpath(problem_root, ".runic-bin"), "p")
+
+  local main_cpp = vim.fs.joinpath(problem_root, "main.cpp")
+  if not file_exists(main_cpp) then
+    write_file(main_cpp, cf_template_content())
+  end
+
+  local notes = vim.fs.joinpath(problem_root, "notes.md")
+  if not file_exists(notes) then
+    write_file(notes, "# " .. contest .. problem .. "\n")
+  end
+
+  local gen_cpp = vim.fs.joinpath(stress_dir, "gen.cpp")
+  if not file_exists(gen_cpp) then
+    write_file(gen_cpp, table.concat({
+      "#include <bits/stdc++.h>",
+      "using namespace std;",
+      "",
+      "int main(int argc, char** argv) {",
+      "  long long seed = (argc > 1 ? atoll(argv[1]) : 1);",
+      "  mt19937_64 rng(seed);",
+      "  int n = (int)(rng() % 10 + 1);",
+      "  cout << n << '\\n';",
+      "  for (int i = 0; i < n; ++i) cout << (int)(rng() % 100) << (i + 1 == n ? '\\n' : ' ');",
+      "  return 0;",
+      "}",
+      "",
+    }, "\n"))
+  end
+
+  local brute_cpp = vim.fs.joinpath(stress_dir, "brute.cpp")
+  if not file_exists(brute_cpp) then
+    write_file(brute_cpp, table.concat({
+      "#include <bits/stdc++.h>",
+      "using namespace std;",
+      "",
+      "int main() {",
+      "  // TODO: implement brute-force solution for stress testing",
+      "  return 0;",
+      "}",
+      "",
+    }, "\n"))
+  end
+
+  write_cf_meta(problem_root, {
+    contest = contest,
+    problem = problem,
+    created_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    profile = current_cf_profile_name(),
+    sample_dir = M.config.cf.sample.dir,
+    solution_file = "main.cpp",
+  })
+
+  cf_apply_start_cwd(problem_root)
+  vim.cmd.edit(main_cpp)
+  vim.notify("Runic CF workspace ready: " .. problem_root, vim.log.levels.INFO)
+end
+
+function M.cf_mode_on()
+  M.config.cf.enabled = true
+  vim.notify("Runic CF mode enabled", vim.log.levels.INFO)
+end
+
+function M.cf_mode_off()
+  M.config.cf.enabled = false
+  M.cf_watch_stop()
+  vim.notify("Runic CF mode disabled", vim.log.levels.INFO)
+end
+
+function M.cf_status()
+  local root, err = cf_root_for_current_buffer()
+  local lines = {
+    "Runic CF Status",
+    string.rep("=", 15),
+    "enabled: " .. tostring(M.config.cf.enabled),
+    "profile: " .. current_cf_profile_name(),
+    "watch: " .. tostring(state.cf_watch_enabled),
+    "workspace_root: " .. expand_path(M.config.cf.workspace_root),
+  }
+  if root then
+    local meta = read_cf_meta(root) or {}
+    lines[#lines + 1] = "problem_root: " .. root
+    if meta.contest and meta.problem then
+      lines[#lines + 1] = "problem: " .. tostring(meta.contest) .. tostring(meta.problem)
+    end
+  else
+    lines[#lines + 1] = "context: " .. err
+  end
+  vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO, { title = "Runic" })
+end
+
+function M.cf_set_profile(name)
+  if type(name) ~= "string" or name == "" then
+    vim.notify("RunicCFProfile usage: :RunicCFProfile <contest|debug>", vim.log.levels.ERROR)
+    return
+  end
+  if not M.config.cf.profiles[name] then
+    vim.notify("Unknown CF profile: " .. name, vim.log.levels.ERROR)
+    return
+  end
+  state.cf_profile = name
+
+  local root = cf_root_for_current_buffer()
+  if root then
+    local meta = read_cf_meta(root) or {}
+    meta.profile = name
+    write_cf_meta(root, meta)
+  end
+
+  vim.notify("Runic CF profile: " .. name, vim.log.levels.INFO)
+end
+
+function M.cf_import_samples()
+  local root, err = cf_root_for_current_buffer()
+  if not root then
+    vim.notify("Runic: " .. err, vim.log.levels.ERROR)
+    return
+  end
+
+  local blob = vim.fn.getreg("+")
+  if type(blob) ~= "string" or blob == "" then
+    vim.notify("Clipboard is empty. Copy sample text and retry.", vim.log.levels.WARN)
+    return
+  end
+
+  blob = blob:gsub("\r", "")
+  local sample_dir = cf_samples_dir(root)
+  vim.fn.mkdir(sample_dir, "p")
+
+  local function classify_header(line)
+    local s = line:lower():gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+    s = s:gsub(":$", "")
+    if s == "copy" or s == "sample" or s:match("^example%s*%d*$") then
+      return "ignore"
+    end
+    if s == "input" or s == "sample input" or s == "input copy" or s == "sample input copy" then
+      return "input"
+    end
+    if s == "output" or s == "sample output" or s == "output copy" or s == "sample output copy" then
+      return "output"
+    end
+    if s:match("^input%s*%d+$") or s:match("^sample%s*%d+%s*input$") then
+      return "input"
+    end
+    if s:match("^output%s*%d+$") or s:match("^sample%s*%d+%s*output$") then
+      return "output"
+    end
+    return nil
+  end
+
+  local function normalize_block(lines)
+    return table.concat(lines, "\n"):gsub("^\n+", ""):gsub("\n+$", "")
+  end
+
+  local blocks = {}
+  local state_mode = nil
+  local input_lines = {}
+  local output_lines = {}
+
+  local function flush_pair()
+    local input_text = normalize_block(input_lines)
+    local output_text = normalize_block(output_lines)
+    if input_text ~= "" and output_text ~= "" then
+      blocks[#blocks + 1] = { input = input_text, output = output_text }
+    end
+    input_lines = {}
+    output_lines = {}
+    state_mode = nil
+  end
+
+  local lines = vim.split(blob, "\n", { plain = true })
+  for _, line in ipairs(lines) do
+    local kind = classify_header(line)
+    if kind == "input" then
+      if state_mode == "output" then
+        flush_pair()
+      end
+      state_mode = "input"
+    elseif kind == "output" then
+      state_mode = "output"
+    elseif kind == "ignore" then
+      -- Ignore known non-content helper labels such as "Copy".
+    else
+      if state_mode == "input" then
+        input_lines[#input_lines + 1] = line
+      elseif state_mode == "output" then
+        output_lines[#output_lines + 1] = line
+      end
+    end
+  end
+  if #input_lines > 0 or #output_lines > 0 then
+    flush_pair()
+  end
+
+  if #blocks == 0 then
+    vim.notify("Could not parse samples. Ensure clipboard has Input/Output blocks.", vim.log.levels.ERROR)
+    return
+  end
+
+  for idx, case in ipairs(blocks) do
+    write_file(vim.fs.joinpath(sample_dir, tostring(idx) .. ".in"), case.input)
+    write_file(vim.fs.joinpath(sample_dir, tostring(idx) .. ".out"), case.output)
+  end
+
+  vim.notify("Imported " .. tostring(#blocks) .. " sample case(s)", vim.log.levels.INFO)
+end
+
+function M.cf_test()
+  local root, err = cf_root_for_current_buffer()
+  if not root then
+    vim.notify("Runic: " .. err, vim.log.levels.ERROR)
+    return
+  end
+
+  local file = cf_solution_path(root)
+  if not file_exists(file) then
+    vim.notify("Runic: solution file missing: " .. file, vim.log.levels.ERROR)
+    return
+  end
+
+  local sample_inputs = list_sample_inputs(root)
+  if #sample_inputs == 0 then
+    vim.notify("No sample inputs found in " .. cf_samples_dir(root), vim.log.levels.WARN)
+    return
+  end
+
+  local compile = cf_compile_command(root, file)
+  local compile_ok = vim.fn.system({ vim.o.shell, "-lc", compile })
+  if vim.v.shell_error ~= 0 then
+    vim.notify("CF compile failed\n" .. compile_ok, vim.log.levels.ERROR)
+    return
+  end
+
+  local passed = 0
+  local failed = 0
+  local first_fail
+  for _, input_path in ipairs(sample_inputs) do
+    local got = cf_run_sample_once(root, file, input_path)
+    local out_path = input_path:gsub("%.in$", ".out")
+    local expected = read_trimmed(out_path)
+    local actual = (got or ""):gsub("\r", ""):gsub("%s+$", "")
+    if expected == nil then
+      passed = passed + 1
+    elseif expected == actual then
+      passed = passed + 1
+    else
+      failed = failed + 1
+      if not first_fail then
+        first_fail = { input = input_path, expected = expected, actual = actual }
+      end
+    end
+  end
+
+  if failed == 0 then
+    vim.notify(string.format("CF samples passed: %d/%d", passed, #sample_inputs), vim.log.levels.INFO)
+    return
+  end
+
+  local lines = {
+    string.format("CF samples failed: %d/%d", failed, #sample_inputs),
+    "first fail: " .. first_fail.input,
+    "expected:",
+    first_fail.expected,
+    "actual:",
+    first_fail.actual,
+  }
+  vim.notify(table.concat(lines, "\n"), vim.log.levels.WARN)
+end
+
+function M.cf_test_async()
+  local root, err = cf_root_for_current_buffer()
+  if not root then
+    vim.notify("Runic: " .. err, vim.log.levels.ERROR)
+    return
+  end
+
+  local file = cf_solution_path(root)
+  if not file_exists(file) then
+    vim.notify("Runic: solution file missing: " .. file, vim.log.levels.ERROR)
+    return
+  end
+
+  if state.cf_test_running then
+    state.cf_test_pending = true
+    return
+  end
+
+  local st, st_err = cf_build_test_state(root, file)
+  if not st then
+    vim.notify(st_err, vim.log.levels.WARN)
+    return
+  end
+
+  local compile = cf_compile_command(root, file)
+  local compile_ok = vim.fn.system({ vim.o.shell, "-lc", compile })
+  if vim.v.shell_error ~= 0 then
+    vim.notify("CF compile failed\n" .. compile_ok, vim.log.levels.ERROR)
+    return
+  end
+
+  state.cf_test_running = true
+  state.cf_test_pending = false
+  vim.schedule(function()
+    cf_test_step(st)
+  end)
+end
+
+local function cf_stress_paths(root)
+  return {
+    generator = vim.fs.joinpath(root, "stress", "gen.cpp"),
+    brute = vim.fs.joinpath(root, "stress", "brute.cpp"),
+    solution = vim.fs.joinpath(root, "main.cpp"),
+    counterexample = vim.fs.joinpath(root, "counterexample.in"),
+  }
+end
+
+local function cf_run_bin_with_input(bin_path, input_path, timeout_ms)
+  local sec = math.max(1, math.floor((timeout_ms or 2000) / 1000))
+  local cmd = string.format("timeout %ss %s < %s", tostring(sec), shellescape(bin_path), shellescape(input_path))
+  local out = vim.fn.system({ vim.o.shell, "-lc", cmd })
+  local code = vim.v.shell_error
+  return out, code
+end
+
+function M.cf_stress(opts)
+  opts = opts or {}
+  local root, err = cf_root_for_current_buffer()
+  if not root then
+    vim.notify("Runic: " .. err, vim.log.levels.ERROR)
+    return
+  end
+
+  local paths = cf_stress_paths(root)
+  paths.solution = cf_solution_path(root)
+  if not file_exists(paths.generator) or not file_exists(paths.brute) or not file_exists(paths.solution) then
+    vim.notify("Stress requires stress/gen.cpp, stress/brute.cpp, and main.cpp", vim.log.levels.ERROR)
+    return
+  end
+
+  local compile_cmds = {
+    cf_compile_command_to(root, paths.solution, cf_stress_binary_path(root, "solution")),
+    cf_compile_command_to(root, paths.brute, cf_stress_binary_path(root, "brute")),
+    cf_compile_command_to(root, paths.generator, cf_stress_binary_path(root, "gen")),
+  }
+  for _, cmd in ipairs(compile_cmds) do
+    local out = vim.fn.system({ vim.o.shell, "-lc", cmd })
+    if vim.v.shell_error ~= 0 then
+      vim.notify("Stress compile failed\n" .. out, vim.log.levels.ERROR)
+      return
+    end
+  end
+
+  local max_cases = tonumber(opts.max_cases) or tonumber(M.config.cf.stress.max_cases) or 500
+  local timeout_ms = tonumber(M.config.cf.stress.timeout_ms) or 2000
+  local gen_bin = cf_stress_binary_path(root, "gen")
+  local sol_bin = cf_stress_binary_path(root, "solution")
+  local brute_bin = cf_stress_binary_path(root, "brute")
+
+  local i = 1
+  local input_path = vim.fs.joinpath(root, ".runic-bin", "stress.in")
+
+  local function step()
+    if i > max_cases then
+      vim.notify("Stress passed " .. tostring(max_cases) .. " cases", vim.log.levels.INFO)
+      return
+    end
+
+    local gen_cmd = string.format("%s %d > %s", shellescape(gen_bin), i, shellescape(input_path))
+    vim.fn.system({ vim.o.shell, "-lc", gen_cmd })
+    if vim.v.shell_error ~= 0 then
+      vim.notify("Generator failed at case " .. tostring(i), vim.log.levels.ERROR)
+      return
+    end
+
+    local got, got_code = cf_run_bin_with_input(sol_bin, input_path, timeout_ms)
+    local exp, exp_code = cf_run_bin_with_input(brute_bin, input_path, timeout_ms)
+    if got_code ~= 0 or exp_code ~= 0 then
+      local msg = string.format("Stress runtime failure at case %d (solution=%d, brute=%d)", i, got_code, exp_code)
+      vim.notify(msg, vim.log.levels.WARN)
+      if M.config.cf.stress.save_counterexample then
+        vim.fn.system({ vim.o.shell, "-lc", string.format("cp %s %s", shellescape(input_path), shellescape(paths.counterexample)) })
+      end
+      return
+    end
+
+    local g = (got or ""):gsub("\r", ""):gsub("%s+$", "")
+    local e = (exp or ""):gsub("\r", ""):gsub("%s+$", "")
+    if g ~= e then
+      if M.config.cf.stress.save_counterexample then
+        vim.fn.system({ vim.o.shell, "-lc", string.format("cp %s %s", shellescape(input_path), shellescape(paths.counterexample)) })
+      end
+      local lines = {
+        string.format("Stress mismatch at case %d", i),
+        "Counterexample saved: " .. paths.counterexample,
+        "expected:",
+        e,
+        "actual:",
+        g,
+      }
+      vim.notify(table.concat(lines, "\n"), vim.log.levels.WARN)
+      return
+    end
+
+    i = i + 1
+    if i % 50 == 0 then
+      vim.notify(string.format("Stress progress: %d/%d", i - 1, max_cases), vim.log.levels.INFO)
+    end
+    vim.schedule(step)
+  end
+
+  vim.schedule(step)
+end
+
+function M.cf_replay_fail()
+  local root, err = cf_root_for_current_buffer()
+  if not root then
+    vim.notify("Runic: " .. err, vim.log.levels.ERROR)
+    return
+  end
+  local file = cf_solution_path(root)
+  if not file_exists(file) then
+    vim.notify("Runic: solution file missing: " .. file, vim.log.levels.ERROR)
+    return
+  end
+  local paths = cf_stress_paths(root)
+  if not file_exists(paths.counterexample) then
+    vim.notify("No counterexample found. Run RunicCFStress first.", vim.log.levels.WARN)
+    return
+  end
+  local cmd = cf_run_command(root, file) .. " < " .. shellescape(paths.counterexample)
+  run_in_terminal(cmd, root)
+end
+
+function M.cf_watch()
+  state.cf_watch_enabled = true
+  vim.notify("Runic CF watch enabled", vim.log.levels.INFO)
+end
+
+function M.cf_watch_stop()
+  state.cf_watch_enabled = false
+  vim.notify("Runic CF watch disabled", vim.log.levels.INFO)
+end
+
+function M.cf_check()
+  M.cf_test_async()
+  if M.config.cf.check.run_stress then
+    M.cf_stress({ max_cases = M.config.cf.check.stress_cases })
+  end
+end
+
+function M.cf_submit()
+  local root, err = cf_root_for_current_buffer()
+  if not root then
+    vim.notify("Runic: " .. err, vim.log.levels.ERROR)
+    return
+  end
+
+  local meta = read_cf_meta(root)
+  if not meta or not meta.contest or not meta.problem then
+    vim.notify("CF metadata missing. Use RunicCFStart first.", vim.log.levels.ERROR)
+    return
+  end
+
+  local url = string.format("https://codeforces.com/contest/%s/problem/%s", tostring(meta.contest), tostring(meta.problem))
+  local open_cmd
+  if vim.fn.has("mac") == 1 then
+    open_cmd = { "open", url }
+  elseif vim.fn.has("win32") == 1 then
+    open_cmd = { "cmd", "/c", "start", "", url }
+  else
+    open_cmd = { "xdg-open", url }
+  end
+  vim.fn.jobstart(open_cmd, { detach = true })
+  local source = cf_solution_path(root)
+  vim.notify("Opened Codeforces page for manual submit. Source: " .. source, vim.log.levels.INFO)
+end
+
 register_commands = function()
   local specs = {
     { "RunicRun", function() M.run({ mode = "auto" }) end, "Run best runic candidate" },
@@ -1171,12 +2105,47 @@ register_commands = function()
     { "RunicReload", function() M.reconfigure() end, "Reapply runic setup" },
     { "RunicStop", M.stop, "Stop active runic process" },
     { "RunicRestart", M.restart_last, "Restart last runic command" },
+    { "RunicCFStart", function(args)
+      local parts = vim.split(args.args, " ", { trimempty = true })
+      M.cf_start({ contest = parts[1], problem = parts[2] })
+    end, "Create/open Codeforces workspace" },
+    { "RunicCFModeOn", M.cf_mode_on, "Enable Codeforces mode" },
+    { "RunicCFModeOff", M.cf_mode_off, "Disable Codeforces mode" },
+    { "RunicCFStatus", M.cf_status, "Show Codeforces mode status" },
+    { "RunicCFImportSamples", M.cf_import_samples, "Import samples from clipboard" },
+    { "RunicCFTest", M.cf_test, "Run Codeforces sample tests" },
+    { "RunicCFWatch", M.cf_watch, "Enable Codeforces watch tests" },
+    { "RunicCFWatchStop", M.cf_watch_stop, "Disable Codeforces watch tests" },
+    { "RunicCFStress", M.cf_stress, "Run Codeforces stress testing" },
+    { "RunicCFReplayFail", M.cf_replay_fail, "Replay last stress counterexample" },
+    { "RunicCFCheck", M.cf_check, "Run pre-submit checks" },
+    { "RunicCFSubmit", M.cf_submit, "Open problem page for manual submit" },
   }
 
   for _, spec in ipairs(specs) do
     pcall(vim.api.nvim_del_user_command, spec[1])
-    vim.api.nvim_create_user_command(spec[1], spec[2], { desc = spec[3] })
+    if spec[1] == "RunicCFStart" then
+      vim.api.nvim_create_user_command(spec[1], spec[2], { desc = spec[3], nargs = "+" })
+    else
+      vim.api.nvim_create_user_command(spec[1], spec[2], { desc = spec[3] })
+    end
   end
+
+  pcall(vim.api.nvim_del_user_command, "RunicCFProfile")
+  vim.api.nvim_create_user_command("RunicCFProfile", function(args)
+    M.cf_set_profile(args.args)
+  end, {
+    desc = "Set CF profile",
+    nargs = 1,
+    complete = function()
+      local out = {}
+      for name in pairs(M.config.cf.profiles) do
+        out[#out + 1] = name
+      end
+      table.sort(out)
+      return out
+    end,
+  })
 end
 
 clear_commands = function()

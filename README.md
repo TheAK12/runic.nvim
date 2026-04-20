@@ -20,6 +20,7 @@ Module name:
 - Toolchain diagnostics (`:RunicHealth`)
 - Override hooks (`vim.g.runic_command`, `vim.g.runic_filetype_commands`, `vim.g.runic_resolver`)
 - Root detection follows the current file path (works even when current working directory is elsewhere)
+- Codeforces mode with dedicated workspace, profile switching, sample testing, and watch mode
 
 ## Install (vim.pack)
 
@@ -59,6 +60,19 @@ require("runic").setup({
 })
 ```
 
+Codeforces-focused setup example:
+
+```lua
+require("runic").setup({
+  cf = {
+    enabled = true,
+    workspace_root = "~/codeforces",
+    chdir_on_start = "tab",
+    profile = "contest",
+  },
+})
+```
+
 ## Global overrides
 
 - `vim.g.runic_command = "<cmd>"`
@@ -91,3 +105,27 @@ Notes:
 - `:RunicReload` - reapplies setup/options without restarting Neovim
 - `:RunicStop` - stops the active runic process
 - `:RunicRestart` - stops active run and reruns last command
+
+## Codeforces Commands
+
+- `:RunicCFStart <contestId> <problemIndex>` - creates/opens workspace under `~/codeforces`
+- `:RunicCFModeOn` / `:RunicCFModeOff` - enable/disable CF-specific runner logic
+- `:RunicCFStatus` - shows current CF mode/profile/workspace details
+- `:RunicCFProfile <contest|debug>` - switches compile profile
+- `:RunicCFImportSamples` - imports `Input/Output` sample blocks from clipboard
+- `:RunicCFTest` - compiles and runs all sample tests in `samples/*.in`
+- `:RunicCFWatch` / `:RunicCFWatchStop` - auto-run samples on save
+- `:RunicCFStress` - runs generator/brute/solution stress loop and saves counterexample
+- `:RunicCFReplayFail` - reruns current solution on saved `counterexample.in`
+- `:RunicCFCheck` - pre-submit check alias (currently runs sample tests)
+- `:RunicCFSubmit` - opens Codeforces problem page for manual submit
+
+CF workspace note:
+
+- Watch/test/stress/submit target the configured solution file (`main.cpp` by default), not helper files like `stress/brute.cpp`.
+- `cf.chdir_on_start` controls cwd switch only for `RunicCFStart` (`"tab"` default, also `"window"`, `"global"`, or `false`).
+
+Stress notes:
+
+- Default stress case count is 500 (`cf.stress.max_cases`).
+- For quick loops while coding, pass a smaller number in setup.
