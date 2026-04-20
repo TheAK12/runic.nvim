@@ -18,6 +18,7 @@ Module name:
 - Cache controls (`:RunicCacheClear`, `:RunicCacheInfo`)
 - Toolchain diagnostics (`:RunicHealth`)
 - Override hooks (`vim.g.runic_command`, `vim.g.runic_filetype_commands`, `vim.g.runic_resolver`)
+- Root detection follows the current file path (works even when current working directory is elsewhere)
 
 ## Install (vim.pack)
 

@@ -7,3 +7,4 @@
 - add browser opener fallbacks with clear notifications when opening fails
 - add setup reconfigure flow and `:RunicReload` for in-session option reloads
 - keep terminal focused by default to support interactive program input
+- root detection now prioritizes project markers near the current file path, not the editor cwd

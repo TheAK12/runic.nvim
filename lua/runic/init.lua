@@ -188,6 +188,21 @@ local function read_package_scripts(root)
 end
 
 local function detect_root(bufnr, file)
+  local function normalize(path)
+    return vim.fs.normalize(path):gsub("/+$", "")
+  end
+
+  local function is_ancestor(parent, child)
+    local p = normalize(parent)
+    local c = normalize(child)
+    if c == p then
+      return true
+    end
+    return c:sub(1, #p + 1) == (p .. "/")
+  end
+
+  local file_dir = vim.fs.dirname(file)
+
   local resolver = M.config.root.resolver
   if type(resolver) == "function" then
     local ok, custom = pcall(resolver, {
@@ -200,25 +215,29 @@ local function detect_root(bufnr, file)
     end
   end
 
-  if M.config.root.use_lsp then
-    for _, client in ipairs(vim.lsp.get_clients({ bufnr = bufnr })) do
-      if client and client.config and type(client.config.root_dir) == "string" and client.config.root_dir ~= "" then
-        return vim.fs.normalize(client.config.root_dir), "lsp"
-      end
-    end
-  end
-
+  -- Always prefer markers near the current file path.
   local found = vim.fs.find(M.config.root.markers, {
-    path = vim.fs.dirname(file),
+    path = file_dir,
     upward = true,
     limit = 1,
-    stop = vim.fs.normalize("~"),
   })
   if #found > 0 then
     return vim.fs.dirname(found[1]), "marker"
   end
 
-  return vim.fs.dirname(file), "file"
+  -- Use LSP root only if it actually contains the current file.
+  if M.config.root.use_lsp then
+    for _, client in ipairs(vim.lsp.get_clients({ bufnr = bufnr })) do
+      if client and client.config and type(client.config.root_dir) == "string" and client.config.root_dir ~= "" then
+        local lsp_root = vim.fs.normalize(client.config.root_dir)
+        if is_ancestor(lsp_root, file) then
+          return lsp_root, "lsp"
+        end
+      end
+    end
+  end
+
+  return file_dir, "file"
 end
 
 local function is_test_file(path)
