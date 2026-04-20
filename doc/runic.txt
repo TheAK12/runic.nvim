@@ -111,7 +111,10 @@ COMMANDS                                                         *runic-commands
         Open Codeforces problem page for manual submit.
 
     :RunicCFAutoSubmit
-        Experimental submission path (disabled by default).
+        Experimental auto-submit path.
+
+    :RunicCFSetCookie
+        Store Codeforces cookie header value for current Neovim session.
 
 ==============================================================================
 GLOBALS                                                           *runic-globals*
@@ -145,6 +148,7 @@ GLOBALS                                                           *runic-globals
 
     cf.submit.cookie_env
         Env var containing Codeforces cookie header value for experimental auto-submit.
+        Auto-submit also accepts a session cookie set via :RunicCFSetCookie.
 
     terminal.url_allowlist
         Setup option. URL auto-open only opens hosts in this list.

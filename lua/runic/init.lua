@@ -14,6 +14,7 @@ local state = {
   cf_test_running = false,
   cf_test_pending = false,
   cf_profile = nil,
+  cf_cookie = nil,
 }
 
 local defaults = {
@@ -152,6 +153,7 @@ local command_names = {
   "RunicCFCheck",
   "RunicCFSubmit",
   "RunicCFAutoSubmit",
+  "RunicCFSetCookie",
   "RunicCFStress",
   "RunicCFReplayFail",
 }
@@ -388,6 +390,18 @@ end
 
 local function cf_solution_path(root)
   return vim.fs.normalize(vim.fs.joinpath(root, cf_solution_relative_path(root)))
+end
+
+local function cf_cookie_value()
+  if type(state.cf_cookie) == "string" and state.cf_cookie ~= "" then
+    return state.cf_cookie
+  end
+  local cookie_env = M.config.cf.submit.cookie_env or "RUNIC_CF_COOKIE"
+  local cookie = os.getenv(cookie_env)
+  if type(cookie) == "string" and cookie ~= "" then
+    return cookie
+  end
+  return nil
 end
 
 local function cf_builtin_template()
@@ -2100,9 +2114,9 @@ function M.cf_auto_submit()
   end
 
   local cookie_env = M.config.cf.submit.cookie_env or "RUNIC_CF_COOKIE"
-  local cookie = os.getenv(cookie_env)
+  local cookie = cf_cookie_value()
   if not cookie or cookie == "" then
-    vim.notify("Missing cookie env " .. cookie_env .. ". Falling back to manual submit.", vim.log.levels.WARN)
+    vim.notify("Missing Codeforces cookie. Set env " .. cookie_env .. " or use :RunicCFSetCookie. Falling back to manual submit.", vim.log.levels.WARN)
     M.cf_submit()
     return
   end
@@ -2179,6 +2193,17 @@ function M.cf_auto_submit()
   vim.notify("Auto submit request sent (experimental). Check My Submissions.", vim.log.levels.INFO)
 end
 
+function M.cf_set_cookie()
+  local prompt = "Codeforces cookie header value: "
+  local cookie = vim.fn.inputsecret(prompt)
+  if type(cookie) ~= "string" or cookie == "" then
+    vim.notify("Runic: cookie not updated", vim.log.levels.WARN)
+    return
+  end
+  state.cf_cookie = cookie
+  vim.notify("Runic: CF cookie stored for current Neovim session", vim.log.levels.INFO)
+end
+
 register_commands = function()
   local specs = {
     { "RunicRun", function() M.run({ mode = "auto" }) end, "Run best runic candidate" },
@@ -2212,6 +2237,7 @@ register_commands = function()
     { "RunicCFCheck", M.cf_check, "Run pre-submit checks" },
     { "RunicCFSubmit", M.cf_submit, "Open problem page for manual submit" },
     { "RunicCFAutoSubmit", M.cf_auto_submit, "Experimental auto submit" },
+    { "RunicCFSetCookie", M.cf_set_cookie, "Set CF cookie for this session" },
   }
 
   for _, spec in ipairs(specs) do

@@ -20,6 +20,7 @@
 - reduce default CF stress max cases from 1000 to 500 for faster feedback loops
 - make CF watch/test/stress/submit consistently use the configured solution file (default: main.cpp)
 - enable experimental CF auto-submit by default on this feature branch for testing
+- add `RunicCFSetCookie` for in-session cookie input and improve missing-cookie guidance for auto-submit fallback
 
 ## v0.2.2
 
