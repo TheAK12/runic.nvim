@@ -1633,43 +1633,73 @@ function M.cf_import_samples()
   local sample_dir = cf_samples_dir(root)
   vim.fn.mkdir(sample_dir, "p")
 
-  local blocks = {}
-  local pending_in
-  local function flush_case(out)
-    if pending_in and out then
-      blocks[#blocks + 1] = { input = pending_in, output = out }
-      pending_in = nil
+  local function classify_header(line)
+    local s = line:lower():gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+    s = s:gsub(":$", "")
+    if s == "copy" or s == "sample" or s:match("^example%s*%d*$") then
+      return "ignore"
     end
+    if s == "input" or s == "sample input" or s == "input copy" or s == "sample input copy" then
+      return "input"
+    end
+    if s == "output" or s == "sample output" or s == "output copy" or s == "sample output copy" then
+      return "output"
+    end
+    if s:match("^input%s*%d+$") or s:match("^sample%s*%d+%s*input$") then
+      return "input"
+    end
+    if s:match("^output%s*%d+$") or s:match("^sample%s*%d+%s*output$") then
+      return "output"
+    end
+    return nil
+  end
+
+  local function normalize_block(lines)
+    return table.concat(lines, "\n"):gsub("^\n+", ""):gsub("\n+$", "")
+  end
+
+  local blocks = {}
+  local state_mode = nil
+  local input_lines = {}
+  local output_lines = {}
+
+  local function flush_pair()
+    local input_text = normalize_block(input_lines)
+    local output_text = normalize_block(output_lines)
+    if input_text ~= "" and output_text ~= "" then
+      blocks[#blocks + 1] = { input = input_text, output = output_text }
+    end
+    input_lines = {}
+    output_lines = {}
+    state_mode = nil
   end
 
   local lines = vim.split(blob, "\n", { plain = true })
-  local i = 1
-  while i <= #lines do
-    local line = lines[i]
-    if line:match("^%s*Input%s*$") then
-      local chunk = {}
-      i = i + 1
-      while i <= #lines and not lines[i]:match("^%s*Output%s*$") do
-        chunk[#chunk + 1] = lines[i]
-        i = i + 1
+  for _, line in ipairs(lines) do
+    local kind = classify_header(line)
+    if kind == "input" then
+      if state_mode == "output" then
+        flush_pair()
       end
-      pending_in = table.concat(chunk, "\n"):gsub("^\n+", ""):gsub("\n+$", "")
-    elseif line:match("^%s*Output%s*$") then
-      local chunk = {}
-      i = i + 1
-      while i <= #lines and not lines[i]:match("^%s*Input%s*$") do
-        chunk[#chunk + 1] = lines[i]
-        i = i + 1
+      state_mode = "input"
+    elseif kind == "output" then
+      state_mode = "output"
+    elseif kind == "ignore" then
+      -- Ignore known non-content helper labels such as "Copy".
+    else
+      if state_mode == "input" then
+        input_lines[#input_lines + 1] = line
+      elseif state_mode == "output" then
+        output_lines[#output_lines + 1] = line
       end
-      local out = table.concat(chunk, "\n"):gsub("^\n+", ""):gsub("\n+$", "")
-      flush_case(out)
-      i = i - 1
     end
-    i = i + 1
+  end
+  if #input_lines > 0 or #output_lines > 0 then
+    flush_pair()
   end
 
   if #blocks == 0 then
-    vim.notify("Could not parse samples. Expected Input/Output blocks.", vim.log.levels.ERROR)
+    vim.notify("Could not parse samples. Ensure clipboard has Input/Output blocks.", vim.log.levels.ERROR)
     return
   end
 
