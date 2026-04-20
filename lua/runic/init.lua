@@ -82,6 +82,7 @@ local defaults = {
   cf = {
     enabled = false,
     workspace_root = "~/codeforces",
+    chdir_on_start = "tab",
     profile = "contest",
     profiles = {
       contest = {
@@ -340,6 +341,25 @@ end
 
 local function expand_path(path)
   return vim.fs.normalize(vim.fn.expand(path))
+end
+
+local function cf_apply_start_cwd(problem_root)
+  local mode = M.config.cf.chdir_on_start
+  if mode == nil or mode == false then
+    return
+  end
+  if mode == true then
+    mode = "tab"
+  end
+
+  local escaped = vim.fn.fnameescape(problem_root)
+  if mode == "tab" then
+    vim.cmd("tcd " .. escaped)
+  elseif mode == "window" then
+    vim.cmd("lcd " .. escaped)
+  elseif mode == "global" then
+    vim.cmd("cd " .. escaped)
+  end
 end
 
 local function is_cpp_file(file)
@@ -1644,6 +1664,7 @@ function M.cf_start(opts)
     solution_file = "main.cpp",
   })
 
+  cf_apply_start_cwd(problem_root)
   vim.cmd.edit(main_cpp)
   vim.notify("Runic CF workspace ready: " .. problem_root, vim.log.levels.INFO)
 end

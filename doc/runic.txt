@@ -137,6 +137,10 @@ GLOBALS                                                           *runic-globals
     cf.workspace_root
         Root directory for Codeforces workspaces (default: ~/codeforces).
 
+    cf.chdir_on_start
+        Change cwd only when :RunicCFStart is used.
+        Values: "tab" (default), "window", "global", or false.
+
     cf.profiles
         Contest/debug compile profiles for C++ mode.
 

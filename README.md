@@ -67,6 +67,7 @@ require("runic").setup({
   cf = {
     enabled = true,
     workspace_root = "~/codeforces",
+    chdir_on_start = "tab",
     profile = "contest",
   },
 })
@@ -122,6 +123,7 @@ Notes:
 CF workspace note:
 
 - Watch/test/stress/submit target the configured solution file (`main.cpp` by default), not helper files like `stress/brute.cpp`.
+- `cf.chdir_on_start` controls cwd switch only for `RunicCFStart` (`"tab"` default, also `"window"`, `"global"`, or `false`).
 
 Stress notes:
 
