@@ -15,6 +15,7 @@
 - add experimental auto-submit path with cookie-based session fallback to manual submit
 - make CF watch non-blocking by running sample tests asynchronously with debounced pending rerun
 - make CF stress loop non-blocking by chunking cases across scheduler ticks
+- reduce default CF stress max cases from 10000 to 1000 for better out-of-box responsiveness
 
 ## v0.2.2
 

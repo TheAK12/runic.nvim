@@ -128,3 +128,8 @@ Auto-submit notes:
 - Requires `cf.submit.auto_submit = true` in setup.
 - Requires env var from `cf.submit.cookie_env` (default: `RUNIC_CF_COOKIE`) containing valid Codeforces cookie header content.
 - If auto-submit fails, runic falls back to manual submit flow.
+
+Stress notes:
+
+- Default stress case count is 1000 (`cf.stress.max_cases`).
+- For quick loops while coding, pass a smaller number in setup.

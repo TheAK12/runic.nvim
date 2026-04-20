@@ -108,7 +108,7 @@ local defaults = {
     },
     stress = {
       timeout_ms = 2000,
-      max_cases = 10000,
+      max_cases = 1000,
       save_counterexample = true,
     },
     check = {
@@ -1927,7 +1927,7 @@ function M.cf_stress(opts)
     end
   end
 
-  local max_cases = tonumber(opts.max_cases) or tonumber(M.config.cf.stress.max_cases) or 10000
+  local max_cases = tonumber(opts.max_cases) or tonumber(M.config.cf.stress.max_cases) or 1000
   local timeout_ms = tonumber(M.config.cf.stress.timeout_ms) or 2000
   local gen_bin = cf_stress_binary_path(root, "gen")
   local sol_bin = cf_stress_binary_path(root, "solution")
