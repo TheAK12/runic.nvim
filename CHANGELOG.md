@@ -13,6 +13,8 @@
 - add built-in CP C++ template generation for new CF problems
 - add stress-testing workflow (`RunicCFStress`, `RunicCFReplayFail`) with counterexample persistence
 - add experimental auto-submit path with cookie-based session fallback to manual submit
+- make CF watch non-blocking by running sample tests asynchronously with debounced pending rerun
+- make CF stress loop non-blocking by chunking cases across scheduler ticks
 
 ## v0.2.2
 

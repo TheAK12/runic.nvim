@@ -11,6 +11,8 @@ local state = {
   intent_preferences = {},
   keymaps = {},
   cf_watch_enabled = false,
+  cf_test_running = false,
+  cf_test_pending = false,
   cf_profile = nil,
 }
 
@@ -746,7 +748,7 @@ local function setup_cache_autocmds()
       local root, source = detect_root(args.buf, file)
       if source and is_cf_workspace(root) then
         vim.schedule(function()
-          M.cf_test()
+          M.cf_test_async()
         end)
       end
     end,
@@ -1490,6 +1492,77 @@ local function cf_run_sample_once(root, file, input_path)
   return vim.fn.system({ vim.o.shell, "-lc", cmd })
 end
 
+local function cf_build_test_state(root, file)
+  local sample_inputs = list_sample_inputs(root)
+  if #sample_inputs == 0 then
+    return nil, "No sample inputs found in " .. cf_samples_dir(root)
+  end
+
+  return {
+    root = root,
+    file = file,
+    sample_inputs = sample_inputs,
+    idx = 1,
+    passed = 0,
+    failed = 0,
+    first_fail = nil,
+  }, nil
+end
+
+local function cf_finish_test(st)
+  state.cf_test_running = false
+
+  if st.failed == 0 then
+    vim.notify(string.format("CF samples passed: %d/%d", st.passed, #st.sample_inputs), vim.log.levels.INFO)
+  else
+    local lines = {
+      string.format("CF samples failed: %d/%d", st.failed, #st.sample_inputs),
+      "first fail: " .. st.first_fail.input,
+      "expected:",
+      st.first_fail.expected,
+      "actual:",
+      st.first_fail.actual,
+    }
+    vim.notify(table.concat(lines, "\n"), vim.log.levels.WARN)
+  end
+
+  if state.cf_test_pending then
+    state.cf_test_pending = false
+    vim.defer_fn(function()
+      M.cf_test_async()
+    end, 100)
+  end
+end
+
+local function cf_test_step(st)
+  if st.idx > #st.sample_inputs then
+    cf_finish_test(st)
+    return
+  end
+
+  local input_path = st.sample_inputs[st.idx]
+  local got = cf_run_sample_once(st.root, st.file, input_path)
+  local out_path = input_path:gsub("%.in$", ".out")
+  local expected = read_trimmed(out_path)
+  local actual = (got or ""):gsub("\r", ""):gsub("%s+$", "")
+
+  if expected == nil then
+    st.passed = st.passed + 1
+  elseif expected == actual then
+    st.passed = st.passed + 1
+  else
+    st.failed = st.failed + 1
+    if not st.first_fail then
+      st.first_fail = { input = input_path, expected = expected, actual = actual }
+    end
+  end
+
+  st.idx = st.idx + 1
+  vim.schedule(function()
+    cf_test_step(st)
+  end)
+end
+
 function M.cf_start(opts)
   opts = opts or {}
   local contest = opts.contest
@@ -1773,6 +1846,43 @@ function M.cf_test()
   vim.notify(table.concat(lines, "\n"), vim.log.levels.WARN)
 end
 
+function M.cf_test_async()
+  local root, err = cf_root_for_current_buffer()
+  if not root then
+    vim.notify("Runic: " .. err, vim.log.levels.ERROR)
+    return
+  end
+
+  local file = vim.api.nvim_buf_get_name(0)
+  if file == "" or not is_cpp_file(file) then
+    file = vim.fs.joinpath(root, "main.cpp")
+  end
+
+  if state.cf_test_running then
+    state.cf_test_pending = true
+    return
+  end
+
+  local st, st_err = cf_build_test_state(root, file)
+  if not st then
+    vim.notify(st_err, vim.log.levels.WARN)
+    return
+  end
+
+  local compile = cf_compile_command(root, file)
+  local compile_ok = vim.fn.system({ vim.o.shell, "-lc", compile })
+  if vim.v.shell_error ~= 0 then
+    vim.notify("CF compile failed\n" .. compile_ok, vim.log.levels.ERROR)
+    return
+  end
+
+  state.cf_test_running = true
+  state.cf_test_pending = false
+  vim.schedule(function()
+    cf_test_step(st)
+  end)
+end
+
 local function cf_stress_paths(root)
   return {
     generator = vim.fs.joinpath(root, "stress", "gen.cpp"),
@@ -1823,8 +1933,15 @@ function M.cf_stress(opts)
   local sol_bin = cf_stress_binary_path(root, "solution")
   local brute_bin = cf_stress_binary_path(root, "brute")
 
-  for i = 1, max_cases do
-    local input_path = vim.fs.joinpath(root, ".runic-bin", "stress.in")
+  local i = 1
+  local input_path = vim.fs.joinpath(root, ".runic-bin", "stress.in")
+
+  local function step()
+    if i > max_cases then
+      vim.notify("Stress passed " .. tostring(max_cases) .. " cases", vim.log.levels.INFO)
+      return
+    end
+
     local gen_cmd = string.format("%s %d > %s", shellescape(gen_bin), i, shellescape(input_path))
     vim.fn.system({ vim.o.shell, "-lc", gen_cmd })
     if vim.v.shell_error ~= 0 then
@@ -1860,9 +1977,15 @@ function M.cf_stress(opts)
       vim.notify(table.concat(lines, "\n"), vim.log.levels.WARN)
       return
     end
+
+    i = i + 1
+    if i % 50 == 0 then
+      vim.notify(string.format("Stress progress: %d/%d", i - 1, max_cases), vim.log.levels.INFO)
+    end
+    vim.schedule(step)
   end
 
-  vim.notify("Stress passed " .. tostring(max_cases) .. " cases", vim.log.levels.INFO)
+  vim.schedule(step)
 end
 
 function M.cf_replay_fail()
@@ -1895,7 +2018,7 @@ function M.cf_watch_stop()
 end
 
 function M.cf_check()
-  M.cf_test()
+  M.cf_test_async()
   if M.config.cf.check.run_stress then
     M.cf_stress({ max_cases = M.config.cf.check.stress_cases })
   end
