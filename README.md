@@ -123,6 +123,10 @@ Notes:
 - `:RunicCFSubmit` - opens Codeforces problem page for manual submit
 - `:RunicCFAutoSubmit` - experimental auto-submit using cookie env (disabled by default)
 
+CF workspace note:
+
+- Watch/test/stress/submit target the configured solution file (`main.cpp` by default), not helper files like `stress/brute.cpp`.
+
 Auto-submit notes:
 
 - Requires `cf.submit.auto_submit = true` in setup.

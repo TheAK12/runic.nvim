@@ -18,6 +18,7 @@
 - reduce default CF stress max cases from 10000 to 1000 for better out-of-box responsiveness
 - make `RunicAction` bypass cache for CF intents to avoid stale command selection
 - reduce default CF stress max cases from 1000 to 500 for faster feedback loops
+- make CF watch/test/stress/submit consistently use the configured solution file (default: main.cpp)
 
 ## v0.2.2
 

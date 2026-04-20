@@ -377,6 +377,19 @@ local function write_cf_meta(root, data)
   write_file(marker, vim.json.encode(data))
 end
 
+local function cf_solution_relative_path(root)
+  local meta = read_cf_meta(root) or {}
+  local rel = meta.solution_file
+  if type(rel) ~= "string" or rel == "" then
+    rel = "main.cpp"
+  end
+  return rel
+end
+
+local function cf_solution_path(root)
+  return vim.fs.normalize(vim.fs.joinpath(root, cf_solution_relative_path(root)))
+end
+
 local function cf_builtin_template()
   return table.concat({
     "#include <bits/stdc++.h>",
@@ -747,6 +760,11 @@ local function setup_cache_autocmds()
       end
       local root, source = detect_root(args.buf, file)
       if source and is_cf_workspace(root) then
+        local saved = vim.fs.normalize(file)
+        local solution = cf_solution_path(root)
+        if saved ~= solution then
+          return
+        end
         vim.schedule(function()
           M.cf_test_async()
         end)
@@ -1630,6 +1648,7 @@ function M.cf_start(opts)
     created_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
     profile = current_cf_profile_name(),
     sample_dir = M.config.cf.sample.dir,
+    solution_file = "main.cpp",
   })
 
   vim.cmd.edit(main_cpp)
@@ -1792,9 +1811,10 @@ function M.cf_test()
     return
   end
 
-  local file = vim.api.nvim_buf_get_name(0)
-  if file == "" or not is_cpp_file(file) then
-    file = vim.fs.joinpath(root, "main.cpp")
+  local file = cf_solution_path(root)
+  if not file_exists(file) then
+    vim.notify("Runic: solution file missing: " .. file, vim.log.levels.ERROR)
+    return
   end
 
   local sample_inputs = list_sample_inputs(root)
@@ -1853,9 +1873,10 @@ function M.cf_test_async()
     return
   end
 
-  local file = vim.api.nvim_buf_get_name(0)
-  if file == "" or not is_cpp_file(file) then
-    file = vim.fs.joinpath(root, "main.cpp")
+  local file = cf_solution_path(root)
+  if not file_exists(file) then
+    vim.notify("Runic: solution file missing: " .. file, vim.log.levels.ERROR)
+    return
   end
 
   if state.cf_test_running then
@@ -1909,6 +1930,7 @@ function M.cf_stress(opts)
   end
 
   local paths = cf_stress_paths(root)
+  paths.solution = cf_solution_path(root)
   if not file_exists(paths.generator) or not file_exists(paths.brute) or not file_exists(paths.solution) then
     vim.notify("Stress requires stress/gen.cpp, stress/brute.cpp, and main.cpp", vim.log.levels.ERROR)
     return
@@ -1994,9 +2016,10 @@ function M.cf_replay_fail()
     vim.notify("Runic: " .. err, vim.log.levels.ERROR)
     return
   end
-  local file = vim.api.nvim_buf_get_name(0)
-  if file == "" or not is_cpp_file(file) then
-    file = vim.fs.joinpath(root, "main.cpp")
+  local file = cf_solution_path(root)
+  if not file_exists(file) then
+    vim.notify("Runic: solution file missing: " .. file, vim.log.levels.ERROR)
+    return
   end
   local paths = cf_stress_paths(root)
   if not file_exists(paths.counterexample) then
@@ -2047,7 +2070,7 @@ function M.cf_submit()
     open_cmd = { "xdg-open", url }
   end
   vim.fn.jobstart(open_cmd, { detach = true })
-  local source = vim.fs.joinpath(root, "main.cpp")
+  local source = cf_solution_path(root)
   vim.notify("Opened Codeforces page for manual submit. Source: " .. source, vim.log.levels.INFO)
 end
 
@@ -2085,7 +2108,7 @@ function M.cf_auto_submit()
   end
 
   local submit_url = string.format("https://codeforces.com/contest/%s/submit", tostring(meta.contest))
-  local source_path = vim.fs.joinpath(root, "main.cpp")
+  local source_path = cf_solution_path(root)
   local source = read_file(source_path)
   if not source or source == "" then
     vim.notify("Could not read source file for submit: " .. source_path, vim.log.levels.ERROR)
