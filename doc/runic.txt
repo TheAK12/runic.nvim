@@ -65,6 +65,9 @@ COMMANDS                                                         *runic-commands
     :RunicHealth
         Check common toolchain executables.
 
+    :RunicReload
+        Reapply setup/options without restarting Neovim.
+
 ==============================================================================
 GLOBALS                                                           *runic-globals*
 

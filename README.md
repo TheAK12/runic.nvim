@@ -80,3 +80,4 @@ require("runic").setup({
 - `:RunicCacheClear` - clears cached resolution results
 - `:RunicCacheInfo` - shows cache entry count, generation, hits, and misses
 - `:RunicHealth` - checks common language/tool executables on your system
+- `:RunicReload` - reapplies setup/options without restarting Neovim

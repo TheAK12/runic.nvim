@@ -7,7 +7,7 @@ local state = {
   cache_misses = 0,
   history = {},
   last = nil,
-  setup_done = false,
+  keymaps = {},
 }
 
 local defaults = {
@@ -72,6 +72,25 @@ local defaults = {
     on_after_run = nil,
   },
 }
+
+local command_names = {
+  "RunicRun",
+  "RunicPick",
+  "RunicRunFile",
+  "RunicRunProject",
+  "RunicPreview",
+  "RunicExplain",
+  "RunicLast",
+  "RunicHistory",
+  "RunicCacheClear",
+  "RunicCacheInfo",
+  "RunicHealth",
+  "RunicReload",
+}
+
+local clear_commands
+local register_commands
+local register_keymaps
 
 M.config = vim.deepcopy(defaults)
 
@@ -238,6 +257,7 @@ local function run_in_terminal(cmd, cwd)
   local focus_terminal = maybe(vim.g.runic_focus_terminal, M.config.terminal.focus)
   local open_url = maybe(vim.g.runic_open_url, M.config.terminal.open_url)
   local opened_urls = {}
+  local url_tail = ""
 
   vim.bo[term_buf].bufhidden = "wipe"
   vim.bo[term_buf].swapfile = false
@@ -273,10 +293,71 @@ local function run_in_terminal(cmd, cwd)
       opener = { "xdg-open", url }
     end
 
-    vim.fn.jobstart(opener, { detach = true })
+    if vim.fn.executable(opener[1]) ~= 1 then
+      vim.schedule(function()
+        vim.notify("Runic could not find browser opener. Open manually: " .. url, vim.log.levels.WARN)
+      end)
+      return
+    end
+
+    local job_id = vim.fn.jobstart(opener, { detach = true })
+    if job_id <= 0 then
+      vim.schedule(function()
+        vim.notify("Runic failed to open browser. Open manually: " .. url, vim.log.levels.WARN)
+      end)
+      return
+    end
+
     vim.schedule(function()
       vim.notify("Runic opened URL: " .. url, vim.log.levels.INFO)
     end)
+  end
+
+  local function detect_and_open_urls(text)
+    if not open_url or type(text) ~= "string" or text == "" then
+      return
+    end
+
+    for url in text:gmatch("\27%]8;;([^\7]+)\7") do
+      open_in_browser(url)
+    end
+
+    local clean = text:gsub("\27%[[0-9;?]*[%a]", "")
+    clean = clean:gsub("\27%]8;[^\7]*\7", "")
+    clean = clean:gsub("\27%]8;;\7", "")
+
+    local function scan_urls(s)
+      local out = {}
+      local i = 1
+      while i <= #s do
+        local local_url_s, local_url_e = s:find("https?://localhost:%d+[%w%-%._~:/%?#%[%]@!$&'%%(%)*+,;=]*", i)
+        local loop_url_s, loop_url_e = s:find("https?://127%.0%.0%.1:%d+[%w%-%._~:/%?#%[%]@!$&'%%(%)*+,;=]*", i)
+        local gen_url_s, gen_url_e = s:find("https?://[%w%-%._~:/%?#%[%]@!$&'%%(%)*+,;=]+", i)
+
+        local next_s, next_e = nil, nil
+        if local_url_s and (not next_s or local_url_s < next_s) then
+          next_s, next_e = local_url_s, local_url_e
+        end
+        if loop_url_s and (not next_s or loop_url_s < next_s) then
+          next_s, next_e = loop_url_s, loop_url_e
+        end
+        if gen_url_s and (not next_s or gen_url_s < next_s) then
+          next_s, next_e = gen_url_s, gen_url_e
+        end
+
+        if not next_s then
+          break
+        end
+
+        out[#out + 1] = s:sub(next_s, next_e)
+        i = next_e + 1
+      end
+      return out
+    end
+
+    for _, url in ipairs(scan_urls(clean)) do
+      open_in_browser(url)
+    end
   end
 
   local function maybe_open_url_from_lines(data)
@@ -284,17 +365,10 @@ local function run_in_terminal(cmd, cwd)
       return
     end
     for _, line in ipairs(data) do
-      if type(line) == "string" and line ~= "" then
-        local clean = line:gsub("\27%[[0-9;?]*[%a]", "")
-        clean = clean:gsub("\27%]8;[^\7]*\7", "")
-        clean = clean:gsub("\27%]8;;\7", "")
-
-        local url = clean:match("(https?://localhost:%d+[%w%-%._~:/%?#%[%]@!$&'%%(%)*+,;=]*)")
-          or clean:match("(https?://127%.0%.0%.1:%d+[%w%-%._~:/%?#%[%]@!$&'%%(%)*+,;=]*)")
-          or clean:match("(https?://[%w%-%._~:/%?#%[%]@!$&'%%(%)*+,;=]+)")
-        if url then
-          open_in_browser(url)
-        end
+      if type(line) == "string" then
+        local combined = url_tail .. line
+        detect_and_open_urls(combined)
+        url_tail = combined:sub(-300)
       end
     end
   end
@@ -455,13 +529,23 @@ local function add_project_candidates(ctx)
   end
 
   if not is_rule_disabled("project_go") and has_file(root, "go.mod") then
-    out[#out + 1] = candidate("project_go", { kind = "project", priority = 8500, command = "go run .", cwd = root, reason = "Go module run" })
-    out[#out + 1] = candidate("project_go", { kind = "project", priority = 8400, command = "go test ./...", cwd = root, reason = "Go module test" })
+    if is_test_file(file) then
+      out[#out + 1] = candidate("project_go", { kind = "project", priority = 8500, command = "go test ./...", cwd = root, reason = "Go module test" })
+      out[#out + 1] = candidate("project_go", { kind = "project", priority = 8400, command = "go run .", cwd = root, reason = "Go module run" })
+    else
+      out[#out + 1] = candidate("project_go", { kind = "project", priority = 8500, command = "go run .", cwd = root, reason = "Go module run" })
+      out[#out + 1] = candidate("project_go", { kind = "project", priority = 8400, command = "go test ./...", cwd = root, reason = "Go module test" })
+    end
   end
 
   if not is_rule_disabled("project_rust") and has_file(root, "Cargo.toml") then
-    out[#out + 1] = candidate("project_rust", { kind = "project", priority = 8350, command = "cargo run", cwd = root, reason = "Rust cargo run" })
-    out[#out + 1] = candidate("project_rust", { kind = "project", priority = 8340, command = "cargo test", cwd = root, reason = "Rust cargo test" })
+    if is_test_file(file) then
+      out[#out + 1] = candidate("project_rust", { kind = "project", priority = 8350, command = "cargo test", cwd = root, reason = "Rust cargo test" })
+      out[#out + 1] = candidate("project_rust", { kind = "project", priority = 8340, command = "cargo run", cwd = root, reason = "Rust cargo run" })
+    else
+      out[#out + 1] = candidate("project_rust", { kind = "project", priority = 8350, command = "cargo run", cwd = root, reason = "Rust cargo run" })
+      out[#out + 1] = candidate("project_rust", { kind = "project", priority = 8340, command = "cargo test", cwd = root, reason = "Rust cargo test" })
+    end
   end
 
   if not is_rule_disabled("project_cmake") and has_file(root, "CMakeLists.txt") then
@@ -878,7 +962,7 @@ function M.health()
   end
 end
 
-local function register_commands()
+register_commands = function()
   local specs = {
     { "RunicRun", function() M.run({ mode = "auto" }) end, "Run best runic candidate" },
     { "RunicPick", function() M.pick({ mode = "auto" }) end, "Pick runic candidate" },
@@ -891,6 +975,7 @@ local function register_commands()
     { "RunicCacheClear", M.clear_cache, "Clear runic cache" },
     { "RunicCacheInfo", M.cache_info, "Show runic cache stats" },
     { "RunicHealth", M.health, "Check runic toolchain health" },
+    { "RunicReload", function() M.reconfigure() end, "Reapply runic setup" },
   }
 
   for _, spec in ipairs(specs) do
@@ -899,20 +984,35 @@ local function register_commands()
   end
 end
 
-local function register_keymaps()
+clear_commands = function()
+  for _, name in ipairs(command_names) do
+    pcall(vim.api.nvim_del_user_command, name)
+  end
+end
+
+register_keymaps = function()
   local km = M.config.keymaps
+
+  for _, mapped in ipairs(state.keymaps) do
+    pcall(vim.keymap.del, "n", mapped)
+  end
+  state.keymaps = {}
+
   if km.run then
     vim.keymap.set("n", km.run, function()
       M.run({ mode = "auto" })
     end, { desc = "Runic run" })
+    state.keymaps[#state.keymaps + 1] = km.run
   end
   if km.pick then
     vim.keymap.set("n", km.pick, function()
       M.pick({ mode = "auto" })
     end, { desc = "Runic pick" })
+    state.keymaps[#state.keymaps + 1] = km.pick
   end
   if km.last then
     vim.keymap.set("n", km.last, M.run_last, { desc = "Runic last" })
+    state.keymaps[#state.keymaps + 1] = km.last
   end
   if km.legacy then
     vim.keymap.set("n", km.legacy, function()
@@ -922,18 +1022,16 @@ local function register_keymaps()
         vim.notify("RunFile command is unavailable", vim.log.levels.WARN)
       end
     end, { desc = "Run file (legacy)" })
+    state.keymaps[#state.keymaps + 1] = km.legacy
   end
 end
 
-function M.setup(opts)
-  if state.setup_done then
-    return M
-  end
-  state.setup_done = true
+function M.reconfigure(opts)
+  M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), M.config, opts or {})
+  state.cache_gen = state.cache_gen + 1
+  state.cache = {}
 
-  M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
-  setup_cache_autocmds()
-
+  clear_commands()
   if M.config.create_commands then
     register_commands()
   end
@@ -941,7 +1039,16 @@ function M.setup(opts)
     register_keymaps()
   end
 
+  vim.notify("Runic reconfigured", vim.log.levels.INFO)
   return M
+end
+
+function M.setup(opts)
+  if not state.autocmd_setup then
+    setup_cache_autocmds()
+    state.autocmd_setup = true
+  end
+  return M.reconfigure(opts)
 end
 
 return M
