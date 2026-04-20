@@ -49,6 +49,7 @@ local defaults = {
       "composer.json",
       "Gemfile",
       "flake.nix",
+      ".runic-cf.json",
     },
   },
   terminal = {
@@ -1468,6 +1469,14 @@ local function cf_root_for_current_buffer()
     return nil, err
   end
   if not is_cf_workspace(ctx.root) then
+    local found = vim.fs.find(".runic-cf.json", {
+      path = vim.fs.dirname(ctx.file),
+      upward = true,
+      limit = 1,
+    })
+    if #found > 0 then
+      return vim.fs.dirname(found[1]), nil
+    end
     return nil, "Current file is not inside a runic CF workspace"
   end
   return ctx.root, nil
