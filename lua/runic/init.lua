@@ -1,4 +1,5 @@
 local M = {}
+local cf_problem_ns = vim.api.nvim_create_namespace("runic_cf_problem")
 
 local state = {
   cache = {},
@@ -14,6 +15,25 @@ local state = {
   cf_test_running = false,
   cf_test_pending = false,
   cf_profile = nil,
+  cf_problem = {
+    bufnr = nil,
+    winid = nil,
+    root = nil,
+    url = nil,
+    request_id = 0,
+    markdown = nil,
+  },
+  root_overrides = {},
+  run_status = {
+    status = "idle",
+    cmd = nil,
+    cwd = nil,
+    started_at = nil,
+    ended_at = nil,
+    duration_ms = nil,
+    exit_code = nil,
+  },
+  stop_requested = false,
 }
 
 local defaults = {
@@ -28,15 +48,28 @@ local defaults = {
   root = {
     use_lsp = true,
     resolver = nil,
+    strategy = { "custom", "marker", "lsp", "file" },
     markers = {
       ".git",
       "package.json",
+      "pnpm-workspace.yaml",
+      "turbo.json",
+      "nx.json",
       "pyproject.toml",
+      "Pipfile",
+      "pdm.lock",
       "uv.lock",
       "poetry.lock",
+      "hatch.toml",
+      "tox.ini",
+      "noxfile.py",
       "requirements.txt",
       "go.mod",
       "Cargo.toml",
+      "justfile",
+      ".justfile",
+      "Taskfile.yml",
+      "Taskfile.yaml",
       "CMakeLists.txt",
       "Makefile",
       "meson.build",
@@ -46,10 +79,19 @@ local defaults = {
       "settings.gradle",
       "settings.gradle.kts",
       "build.sbt",
+      "deno.json",
+      "deno.jsonc",
+      "bunfig.toml",
       "pubspec.yaml",
       "mix.exs",
       "composer.json",
+      "artisan",
       "Gemfile",
+      "Rakefile",
+      "stack.yaml",
+      "project.clj",
+      "deps.edn",
+      "build.zig",
       "flake.nix",
       ".runic-cf.json",
     },
@@ -69,7 +111,27 @@ local defaults = {
     command = nil,
     filetype_commands = {},
     resolver = nil,
-    python_project_runner = false,
+    python_project_runner = true,
+  },
+  tasks = {
+    enabled = true,
+    include_in_auto = true,
+    base_priority = 7600,
+  },
+  packs = {
+    core = true,
+    overrides = true,
+    tasks = true,
+    cf = true,
+    node = true,
+    python = true,
+    go = true,
+    rust = true,
+    java = true,
+    dotnet = true,
+    c_cpp = true,
+    scripting = true,
+    fallback = true,
   },
   rules = {
     disable = {},
@@ -116,6 +178,17 @@ local defaults = {
       run_stress = false,
       stress_cases = 200,
     },
+    problem = {
+      auto_open = true,
+      pane_width = 72,
+      cache = true,
+      cache_file = ".runic-problem.md",
+      refresh_on_start = false,
+      lang = "en",
+      proxy_fallback = true,
+      proxy_base = "https://r.jina.ai/http://",
+      view = "comfortable",
+    },
   },
 }
 
@@ -127,8 +200,12 @@ local command_names = {
   "RunicRunProject",
   "RunicPreview",
   "RunicExplain",
+  "RunicRoot",
+  "RunicRootReset",
+  "RunicStatus",
   "RunicLast",
   "RunicHistory",
+  "RunicTasks",
   "RunicCacheClear",
   "RunicCacheInfo",
   "RunicHealth",
@@ -146,6 +223,10 @@ local command_names = {
   "RunicCFWatchStop",
   "RunicCFCheck",
   "RunicCFSubmit",
+  "RunicCFProblemOpen",
+  "RunicCFProblemRefresh",
+  "RunicCFProblemClose",
+  "RunicCFProblemToggleView",
   "RunicCFStress",
   "RunicCFReplayFail",
 }
@@ -193,7 +274,59 @@ local function maybe(value, fallback)
   return value
 end
 
+local RULE_PACKS = {
+  override_global = "overrides",
+  override_filetype = "overrides",
+  override_resolver = "overrides",
+  project_cf = "cf",
+  project_node = "node",
+  project_python = "python",
+  project_go = "go",
+  project_rust = "rust",
+  project_cmake = "c_cpp",
+  project_make = "c_cpp",
+  project_java_maven = "java",
+  project_java_gradle = "java",
+  project_sbt = "java",
+  project_dotnet = "dotnet",
+  project_dart = "scripting",
+  project_elixir = "scripting",
+  project_php = "scripting",
+  project_ruby = "scripting",
+  project_scripting = "scripting",
+  project_python_test = "python",
+  project_go_test_target = "go",
+  project_rust_test_target = "rust",
+  task_npm = "tasks",
+  task_just = "tasks",
+  task_taskfile = "tasks",
+  file_c = "c_cpp",
+  file_cpp = "c_cpp",
+  file_html = "scripting",
+  file_ext = "scripting",
+  fallback_executable = "fallback",
+  fallback_shebang = "fallback",
+}
+
+local function is_pack_enabled(pack)
+  if pack == nil then
+    return true
+  end
+  local packs = M.config.packs
+  if type(packs) ~= "table" then
+    return true
+  end
+  if packs.core == false and pack ~= "core" then
+    return false
+  end
+  return packs[pack] ~= false
+end
+
 local function is_rule_disabled(rule_id)
+  local pack = RULE_PACKS[rule_id]
+  if not is_pack_enabled(pack) then
+    return true
+  end
   return M.config.rules.disable[rule_id] == true
 end
 
@@ -249,6 +382,145 @@ local function read_package_scripts(root)
   return data.scripts
 end
 
+local function system_list_in_dir(argv, cwd)
+  if vim.system then
+    local result = vim.system(argv, { cwd = cwd, text = true }):wait()
+    return result.stdout or "", result.code or 1
+  end
+
+  local quoted = {}
+  for _, arg in ipairs(argv) do
+    quoted[#quoted + 1] = shellescape(tostring(arg))
+  end
+  local cmd = "cd " .. shellescape(cwd) .. " && " .. table.concat(quoted, " ")
+  local out = vim.fn.system({ vim.o.shell, "-lc", cmd })
+  return out, vim.v.shell_error
+end
+
+local function path_stem(path)
+  local name = vim.fn.fnamemodify(path, ":t")
+  return name:gsub("%.[^.]+$", "")
+end
+
+local function relative_to(path, base)
+  local p = vim.fs.normalize(path)
+  local b = vim.fs.normalize(base)
+  if b:sub(-1) ~= "/" then
+    b = b .. "/"
+  end
+  if p:sub(1, #b) == b then
+    return p:sub(#b + 1)
+  end
+  return vim.fn.fnamemodify(path, ":t")
+end
+
+local function has_taskfile(root)
+  return has_any_file(root, { "Taskfile.yml", "Taskfile.yaml" })
+end
+
+local function read_lines(path)
+  local ok, lines = pcall(vim.fn.readfile, path)
+  if not ok or type(lines) ~= "table" then
+    return {}
+  end
+  return lines
+end
+
+local function discover_just_tasks(root)
+  local tasks = {}
+  local function add_task(name)
+    if type(name) == "string" and name ~= "" and not name:match("^_") and not tasks[name] then
+      tasks[name] = true
+    end
+  end
+
+  if has_exec("just") then
+    local out, code = system_list_in_dir({ "just", "--list", "--unsorted" }, root)
+    if code == 0 then
+      for line in out:gmatch("[^\n]+") do
+        local name = line:match("^%s*([%w_%-%.]+)%s")
+        add_task(name)
+      end
+    end
+  end
+
+  if vim.tbl_isempty(tasks) then
+    local just_path = has_file(root, "justfile") and vim.fs.joinpath(root, "justfile") or vim.fs.joinpath(root, ".justfile")
+    if file_exists(just_path) then
+      for _, line in ipairs(read_lines(just_path)) do
+        local name = line:match("^([%w_%-%.]+)%s*:")
+        add_task(name)
+      end
+    end
+  end
+
+  local out = {}
+  for name in pairs(tasks) do
+    out[#out + 1] = name
+  end
+  table.sort(out)
+  return out
+end
+
+local function discover_taskfile_tasks(root)
+  local tasks = {}
+  local function add_task(name)
+    if type(name) == "string" and name ~= "" and not tasks[name] then
+      tasks[name] = true
+    end
+  end
+
+  if has_exec("task") and has_taskfile(root) then
+    local out, code = system_list_in_dir({ "task", "--list" }, root)
+    if code == 0 then
+      for line in out:gmatch("[^\n]+") do
+        local name = line:match("^%*%s+([%w_%-%.:]+)")
+        add_task(name)
+      end
+    end
+  end
+
+  if vim.tbl_isempty(tasks) then
+    local taskfile = has_file(root, "Taskfile.yml") and vim.fs.joinpath(root, "Taskfile.yml") or vim.fs.joinpath(root, "Taskfile.yaml")
+    if file_exists(taskfile) then
+      local in_tasks = false
+      for _, line in ipairs(read_lines(taskfile)) do
+        if line:match("^tasks:%s*$") then
+          in_tasks = true
+        elseif in_tasks then
+          local name = line:match("^%s%s([%w_%-%.:]+):%s*$")
+          if name then
+            add_task(name)
+          end
+        end
+      end
+    end
+  end
+
+  local out = {}
+  for name in pairs(tasks) do
+    out[#out + 1] = name
+  end
+  table.sort(out)
+  return out
+end
+
+local function root_override_key()
+  return tostring(vim.api.nvim_get_current_tabpage())
+end
+
+local function get_root_override()
+  return state.root_overrides[root_override_key()]
+end
+
+local function set_root_override(path)
+  state.root_overrides[root_override_key()] = path
+end
+
+local function reset_root_override()
+  state.root_overrides[root_override_key()] = nil
+end
+
 local function detect_root(bufnr, file)
   local function normalize(path)
     return vim.fs.normalize(path):gsub("/+$", "")
@@ -264,37 +536,74 @@ local function detect_root(bufnr, file)
   end
 
   local file_dir = vim.fs.dirname(file)
+  local override = get_root_override()
+  if type(override) == "string" and override ~= "" then
+    return vim.fs.normalize(override), "override"
+  end
 
-  local resolver = M.config.root.resolver
-  if type(resolver) == "function" then
+  local function resolve_custom()
+    local resolver = M.config.root.resolver
+    if type(resolver) ~= "function" then
+      return nil
+    end
     local ok, custom = pcall(resolver, {
       bufnr = bufnr,
       file = file,
       filetype = vim.bo[bufnr].filetype,
     })
     if ok and type(custom) == "string" and custom ~= "" then
-      return vim.fs.normalize(custom), "custom"
+      return vim.fs.normalize(custom)
     end
+    return nil
   end
 
-  -- Always prefer markers near the current file path.
-  local found = vim.fs.find(M.config.root.markers, {
-    path = file_dir,
-    upward = true,
-    limit = 1,
-  })
-  if #found > 0 then
-    return vim.fs.dirname(found[1]), "marker"
+  local function resolve_marker()
+    local found = vim.fs.find(M.config.root.markers, {
+      path = file_dir,
+      upward = true,
+      limit = 1,
+    })
+    if #found > 0 then
+      return vim.fs.dirname(found[1])
+    end
+    return nil
   end
 
-  -- Use LSP root only if it actually contains the current file.
-  if M.config.root.use_lsp then
+  local function resolve_lsp()
+    if not M.config.root.use_lsp then
+      return nil
+    end
     for _, client in ipairs(vim.lsp.get_clients({ bufnr = bufnr })) do
       if client and client.config and type(client.config.root_dir) == "string" and client.config.root_dir ~= "" then
         local lsp_root = vim.fs.normalize(client.config.root_dir)
         if is_ancestor(lsp_root, file) then
-          return lsp_root, "lsp"
+          return lsp_root
         end
+      end
+    end
+    return nil
+  end
+
+  local resolvers = {
+    custom = resolve_custom,
+    marker = resolve_marker,
+    lsp = resolve_lsp,
+    file = function()
+      return file_dir
+    end,
+  }
+
+  local strategy = M.config.root.strategy
+  if type(strategy) ~= "table" or #strategy == 0 then
+    strategy = { "custom", "marker", "lsp", "file" }
+  end
+
+  for _, source in ipairs(strategy) do
+    local resolver = resolvers[source]
+    if resolver then
+      local root = resolver()
+      if type(root) == "string" and root ~= "" then
+        return vim.fs.normalize(root), source
       end
     end
   end
@@ -388,6 +697,769 @@ end
 local function write_cf_meta(root, data)
   local marker = vim.fs.joinpath(root, ".runic-cf.json")
   write_file(marker, vim.json.encode(data))
+end
+
+local function cf_problem_cache_path(root)
+  local name = M.config.cf.problem.cache_file or ".runic-problem.md"
+  return vim.fs.joinpath(root, name)
+end
+
+local function cf_problem_urls(meta)
+  local contest = tostring(meta.contest)
+  local problem = tostring(meta.problem)
+  local lang = M.config.cf.problem.lang
+  local q = ""
+  if type(lang) == "string" and lang ~= "" then
+    q = "?locale=" .. lang
+  end
+  return {
+    string.format("https://codeforces.com/contest/%s/problem/%s%s", contest, problem, q),
+    string.format("https://codeforces.com/problemset/problem/%s/%s%s", contest, problem, q),
+  }
+end
+
+local function cf_proxy_url(url)
+  local normalized = tostring(url):gsub("^https?://", "http://")
+  local base = M.config.cf.problem.proxy_base or "https://r.jina.ai/http://"
+  return base .. normalized:gsub("^http://", "")
+end
+
+local function cf_fetch_url(url)
+  local out = vim.fn.system({
+    "curl",
+    "-sL",
+    "--connect-timeout",
+    "5",
+    "--max-time",
+    "20",
+    "-A",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    url,
+  })
+  return out, vim.v.shell_error
+end
+
+local function cf_fetch_url_async(url, cb)
+  if vim.system then
+    vim.system({
+      "curl",
+      "-sL",
+      "--connect-timeout",
+      "5",
+      "--max-time",
+      "20",
+      "-A",
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      url,
+    }, { text = true }, function(res)
+      vim.schedule(function()
+        cb(res.stdout or "", res.code or 1)
+      end)
+    end)
+    return
+  end
+
+  local out, code = cf_fetch_url(url)
+  cb(out, code)
+end
+
+local function cf_is_challenge_page(html)
+  local lower = (html or ""):lower()
+  return lower:find("just a moment") ~= nil
+    or lower:find("__cf_chl_opt") ~= nil
+    or lower:find("enable javascript and cookies to continue") ~= nil
+    or lower:find("cf%-challenge") ~= nil
+end
+
+local function cf_problem_markdown_from_text(meta, url, text)
+  local raw = (text or ""):gsub("\r", "")
+  raw = raw:gsub("^%s*Title:%s*.-\n", "")
+  raw = raw:gsub("^%s*URL Source:%s*.-\n", "")
+  raw = raw:gsub("^%s*Markdown Content:%s*\n", "")
+  raw = raw:gsub("^\n+", "")
+
+  local all = vim.split(raw, "\n", { plain = true })
+
+  local function next_nonempty(idx)
+    local i = idx + 1
+    while i <= #all do
+      if all[i]:match("%S") then
+        return i, all[i]
+      end
+      i = i + 1
+    end
+    return nil, nil
+  end
+
+  local title_idx, title = nil, nil
+  for i, line in ipairs(all) do
+    local trimmed = line:gsub("^%s+", ""):gsub("%s+$", "")
+    if trimmed:match("^[A-Z]%.[%s].+") then
+      title_idx = i
+      title = trimmed
+      break
+    end
+  end
+  if not title then
+    title = tostring(meta.contest) .. tostring(meta.problem)
+    title_idx = 1
+  end
+
+  local time_limit, memory_limit, input_spec, output_spec
+  local tags = {}
+  local rating
+  for i, line in ipairs(all) do
+    local trimmed = line:gsub("^%s+", ""):gsub("%s+$", "")
+    local lower = trimmed:lower()
+    if lower == "time limit per test" then
+      local _, v = next_nonempty(i)
+      time_limit = v or time_limit
+    elseif lower == "memory limit per test" then
+      local _, v = next_nonempty(i)
+      memory_limit = v or memory_limit
+    elseif lower == "input" then
+      local _, v = next_nonempty(i)
+      if type(v) == "string" then
+        local vl = v:lower()
+        if vl:match("standard%s+input") or vl == "stdin" then
+          input_spec = input_spec or v
+        end
+      end
+    elseif lower == "output" then
+      local _, v = next_nonempty(i)
+      if type(v) == "string" then
+        local vl = v:lower()
+        if vl:match("standard%s+output") or vl == "stdout" then
+          output_spec = output_spec or v
+        end
+      end
+    end
+  end
+
+  local tags_start = nil
+  for i, line in ipairs(all) do
+    if line:lower():match("^%s*→%s*problem%s+tags%s*$") then
+      tags_start = i
+      break
+    end
+  end
+  if tags_start then
+    for i = tags_start + 1, #all do
+      local trimmed = all[i]:gsub("^%s+", ""):gsub("%s+$", "")
+      if trimmed == "" then
+        -- skip
+      elseif trimmed:match("^%*") then
+        local r = trimmed:match("%*%s*(%d+)")
+        if r then
+          rating = r
+        end
+      elseif trimmed:lower():match("^no tag edit access") or trimmed:match("^%*") or trimmed:match("^%[") or trimmed:match("^→") then
+        break
+      elseif trimmed:match("^%*%s+%[") then
+        break
+      else
+        tags[#tags + 1] = trimmed
+      end
+    end
+  end
+
+  local body = {}
+  local blank = false
+  for i = title_idx, #all do
+    local line = all[i]
+    local trimmed = line:gsub("^%s+", ""):gsub("%s+$", "")
+    local lower = trimmed:lower()
+
+    local drop = false
+    if trimmed == "" then
+      if blank then
+        drop = true
+      else
+        blank = true
+      end
+    else
+      blank = false
+      if trimmed:match("^%[!%[Image")
+        or trimmed:match("^%*%s+%[")
+        or trimmed:match("^%|.*%|$")
+        or trimmed:match("^→")
+        or lower:match("^want to solve the contest problems")
+        or lower:match("^virtual contest is a way")
+        or lower:match("^no tag edit access")
+        or lower:match("^desktop version")
+        or lower == "copy"
+      then
+        drop = true
+      end
+    end
+
+    if not drop then
+      body[#body + 1] = line
+    end
+  end
+
+  local cleaned = table.concat(body, "\n")
+  local function drop_leading_header_block(s)
+    local lines = vim.split(s, "\n", { plain = true })
+    local i = 1
+    local function trim(v)
+      return v:gsub("^%s+", ""):gsub("%s+$", "")
+    end
+    local function skip_blank()
+      while i <= #lines and trim(lines[i]) == "" do
+        i = i + 1
+      end
+    end
+    skip_blank()
+    if trim(lines[i] or "") == title then
+      i = i + 1
+    end
+    skip_blank()
+    local function skip_pair(label)
+      skip_blank()
+      if trim(lines[i] or ""):lower() == label then
+        i = i + 1
+        skip_blank()
+        i = i + 1
+        skip_blank()
+      end
+    end
+    skip_pair("time limit per test")
+    skip_pair("memory limit per test")
+    skip_pair("input")
+    skip_pair("output")
+    return table.concat(vim.list_slice(lines, i), "\n")
+  end
+  cleaned = drop_leading_header_block(cleaned)
+  cleaned = cleaned:gsub("%$([^$]+)%$", function(expr)
+    local e = expr
+    e = e:gsub("\\leq", "<=")
+    e = e:gsub("\\geq", ">=")
+    e = e:gsub("\\neq", "!=")
+    e = e:gsub("\\times", "*")
+    e = e:gsub("\\cdot", "*")
+    e = e:gsub("\\%s+", "")
+    e = e:gsub("%s+", " ")
+    e = e:gsub("^%s+", ""):gsub("%s+$", "")
+    return e
+  end)
+  cleaned = cleaned:gsub("%)%s*—%s*", ") — ")
+  cleaned = cleaned:gsub("([%w%)])—([%w%(])", "%1 — %2")
+  cleaned = cleaned:gsub("([%w%)])—%s+", "%1 — ")
+  cleaned = cleaned:gsub("\n\n\n+", "\n\n")
+  cleaned = cleaned:gsub("^\n+", ""):gsub("\n+$", "")
+
+  local lines = {
+    "# " .. title,
+    "",
+    "- URL: " .. url,
+  }
+  if time_limit then
+    lines[#lines + 1] = "- Time limit: " .. time_limit
+  end
+  if memory_limit then
+    lines[#lines + 1] = "- Memory limit: " .. memory_limit
+  end
+  if input_spec then
+    lines[#lines + 1] = "- Input: " .. input_spec
+  end
+  if output_spec then
+    lines[#lines + 1] = "- Output: " .. output_spec
+  end
+  if #tags > 0 then
+    lines[#lines + 1] = "- Tags: " .. table.concat(tags, ", ")
+  end
+  if rating then
+    lines[#lines + 1] = "- Rating: " .. rating
+  end
+  lines[#lines + 1] = "- Source: proxy fallback"
+  lines[#lines + 1] = "- Fetched: " .. os.date("!%Y-%m-%dT%H:%M:%SZ")
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "---"
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = cleaned
+
+  return table.concat(lines, "\n")
+end
+
+local function cf_problem_error_markdown(meta, err)
+  local urls = cf_problem_urls(meta)
+  local lines = {
+    "# " .. tostring(meta.contest) .. tostring(meta.problem),
+    "",
+    "Could not fetch problem statement automatically.",
+    "",
+    "- Reason: " .. tostring(err or "unknown"),
+    "- Open in browser: " .. urls[1],
+    "- Fallback URL: " .. urls[2],
+    "",
+    "---",
+    "",
+    "You can still continue solving in `main.cpp` and import samples manually.",
+  }
+  return table.concat(lines, "\n")
+end
+
+local function cf_decode_html_entities(text)
+  local out = text
+  out = out:gsub("&nbsp;", " ")
+  out = out:gsub("&lt;", "<")
+  out = out:gsub("&gt;", ">")
+  out = out:gsub("&amp;", "&")
+  out = out:gsub("&quot;", '"')
+  out = out:gsub("&#39;", "'")
+  out = out:gsub("&#(%d+);", function(num)
+    local n = tonumber(num)
+    if not n then
+      return ""
+    end
+    local ok, ch = pcall(vim.fn.nr2char, n)
+    return ok and ch or ""
+  end)
+  out = out:gsub("&#x([%da-fA-F]+);", function(hex)
+    local n = tonumber(hex, 16)
+    if not n then
+      return ""
+    end
+    local ok, ch = pcall(vim.fn.nr2char, n)
+    return ok and ch or ""
+  end)
+  return out
+end
+
+local function cf_strip_tags(text)
+  return text:gsub("<[^>]->", "")
+end
+
+local function cf_extract_div_at(html, start_pos)
+  local pos = start_pos
+  local depth = 0
+  while true do
+    local s, e, close = html:find("<%s*(/?)%s*[dD][iI][vV][^>]*>", pos)
+    if not s then
+      return nil
+    end
+    if close == "" then
+      depth = depth + 1
+    else
+      depth = depth - 1
+      if depth == 0 then
+        return html:sub(start_pos, e), start_pos, e
+      end
+    end
+    pos = e + 1
+  end
+end
+
+local function cf_find_div_with_class(html, class_name)
+  local pos = 1
+  local class_pat = "(^|%s)" .. vim.pesc(class_name) .. "(%s|$)"
+  while true do
+    local s, e, quote, classes = html:find("<%s*[dD][iI][vV][^>]-class%s*=%s*([\"'])(.-)%1[^>]*>", pos)
+    if not s then
+      return nil
+    end
+    if quote and classes and classes:match(class_pat) then
+      return cf_extract_div_at(html, s)
+    end
+    pos = e + 1
+  end
+end
+
+local function cf_find_problem_statement(html)
+  return cf_find_div_with_class(html, "problem-statement")
+end
+
+local function cf_find_class_div(html, class_name)
+  return cf_find_div_with_class(html, class_name)
+end
+
+local function cf_textify_html(html)
+  local text = html:gsub("\r", "")
+  local pre_blocks = {}
+  text = text:gsub("<pre[^>]*>(.-)</pre>", function(inner)
+    local idx = #pre_blocks + 1
+    local cleaned = inner:gsub("<br%s*/?>", "\n")
+    cleaned = cf_strip_tags(cleaned)
+    cleaned = cf_decode_html_entities(cleaned)
+    cleaned = cleaned:gsub("^\n+", ""):gsub("\n+$", "")
+    pre_blocks[idx] = "```\n" .. cleaned .. "\n```"
+    return "\n@@RUNIC_PRE_" .. tostring(idx) .. "@@\n"
+  end)
+
+  text = text:gsub("<br%s*/?>", "\n")
+  text = text:gsub("</p>", "\n\n")
+  text = text:gsub("</div>", "\n")
+  text = text:gsub("<li[^>]*>", "\n- ")
+  text = text:gsub("</li>", "\n")
+  text = text:gsub("<[^>]->", "")
+  text = cf_decode_html_entities(text)
+  text = text:gsub("[ \t]+", " ")
+  text = text:gsub("\n[ \t]+", "\n")
+  text = text:gsub("[ \t]+\n", "\n")
+  text = text:gsub("\n\n\n+", "\n\n")
+  text = text:gsub("^\n+", ""):gsub("\n+$", "")
+
+  text = text:gsub("@@RUNIC_PRE_(%d+)@@", function(i)
+    return pre_blocks[tonumber(i)] or ""
+  end)
+  return text
+end
+
+local function cf_header_value(statement_html, class_name)
+  local div = cf_find_class_div(statement_html, class_name)
+  if not div then
+    return nil
+  end
+  local v = div:gsub('<div class="property%-title">.-</div>', "")
+  v = cf_strip_tags(v)
+  v = cf_decode_html_entities(v)
+  v = v:gsub("^%s+", ""):gsub("%s+$", "")
+  if v == "" then
+    return nil
+  end
+  return v
+end
+
+local function cf_problem_markdown(meta, url, statement_html)
+  local title = statement_html:match('<div class="title">(.-)</div>')
+  title = title and cf_decode_html_entities(cf_strip_tags(title)):gsub("^%s+", ""):gsub("%s+$", "") or (tostring(meta.contest) .. tostring(meta.problem))
+  local header = cf_find_class_div(statement_html, "header")
+  local body_html = statement_html
+  if header then
+    body_html = body_html:gsub(vim.pesc(header), "", 1)
+  end
+
+  local lines = {
+    "# " .. title,
+    "",
+    "- URL: " .. url,
+  }
+  local time_limit = cf_header_value(statement_html, "time-limit")
+  local memory_limit = cf_header_value(statement_html, "memory-limit")
+  local input = cf_header_value(statement_html, "input-file")
+  local output = cf_header_value(statement_html, "output-file")
+  if time_limit then
+    lines[#lines + 1] = "- Time limit: " .. time_limit
+  end
+  if memory_limit then
+    lines[#lines + 1] = "- Memory limit: " .. memory_limit
+  end
+  if input then
+    lines[#lines + 1] = "- Input: " .. input
+  end
+  if output then
+    lines[#lines + 1] = "- Output: " .. output
+  end
+  lines[#lines + 1] = "- Fetched: " .. os.date("!%Y-%m-%dT%H:%M:%SZ")
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "---"
+  lines[#lines + 1] = ""
+
+  local text = cf_textify_html(body_html)
+  if text ~= "" then
+    lines[#lines + 1] = text
+  end
+  return table.concat(lines, "\n")
+end
+
+local function cf_fetch_problem_markdown(meta)
+  local urls = cf_problem_urls(meta)
+  local last_err = nil
+  for _, url in ipairs(urls) do
+    local html, code = cf_fetch_url(url)
+    if code ~= 0 or type(html) ~= "string" or html == "" then
+      last_err = "fetch failed"
+    elseif cf_is_challenge_page(html) then
+      last_err = "blocked by Codeforces anti-bot page"
+    else
+      local statement = cf_find_problem_statement(html)
+      if not statement then
+        statement = cf_find_class_div(html, "ttypography")
+      end
+      if statement and statement ~= "" then
+        return cf_problem_markdown(meta, url, statement), url, nil
+      end
+      last_err = "problem statement block not found"
+    end
+  end
+
+  if M.config.cf.problem.proxy_fallback then
+    for _, url in ipairs(urls) do
+      local purl = cf_proxy_url(url)
+      local body, code = cf_fetch_url(purl)
+      if code == 0 and type(body) == "string" and body ~= "" then
+        if not cf_is_challenge_page(body) then
+          return cf_problem_markdown_from_text(meta, url, body), url, nil
+        end
+      end
+    end
+    if last_err == nil then
+      last_err = "proxy fallback failed"
+    end
+  end
+
+  return nil, nil, last_err or "unknown fetch error"
+end
+
+local function cf_fetch_problem_markdown_async(meta, cb)
+  local urls = cf_problem_urls(meta)
+  local last_err = nil
+  local max_attempts = 2
+
+  local function done(markdown, url, err)
+    cb(markdown, url, err)
+  end
+
+  local function fetch_with_retry(url, attempt, cb_fetch)
+    cf_fetch_url_async(url, function(body, code)
+      if code == 0 and type(body) == "string" and body ~= "" then
+        cb_fetch(body, code)
+        return
+      end
+
+      if attempt < max_attempts then
+        vim.defer_fn(function()
+          fetch_with_retry(url, attempt + 1, cb_fetch)
+        end, 250)
+        return
+      end
+
+      cb_fetch(body, code)
+    end)
+  end
+
+  local function try_proxy(i)
+    if not M.config.cf.problem.proxy_fallback then
+      done(nil, nil, last_err or "unknown fetch error")
+      return
+    end
+    if i > #urls then
+      done(nil, nil, last_err or "proxy fallback failed")
+      return
+    end
+
+    local url = urls[i]
+    local purl = cf_proxy_url(url)
+    fetch_with_retry(purl, 1, function(body, code)
+      if code == 0 and type(body) == "string" and body ~= "" and not cf_is_challenge_page(body) then
+        done(cf_problem_markdown_from_text(meta, url, body), url, nil)
+      else
+        last_err = "proxy fallback failed (code=" .. tostring(code) .. ")"
+        try_proxy(i + 1)
+      end
+    end)
+  end
+
+  local function try_direct(i)
+    if i > #urls then
+      try_proxy(1)
+      return
+    end
+
+    local url = urls[i]
+    fetch_with_retry(url, 1, function(html, code)
+      if code ~= 0 or type(html) ~= "string" or html == "" then
+        last_err = "fetch failed (code=" .. tostring(code) .. ")"
+        try_direct(i + 1)
+        return
+      end
+
+      if cf_is_challenge_page(html) then
+        last_err = "blocked by Codeforces anti-bot page"
+        try_direct(i + 1)
+        return
+      end
+
+      local statement = cf_find_problem_statement(html)
+      if not statement then
+        statement = cf_find_class_div(html, "ttypography")
+      end
+      if statement and statement ~= "" then
+        done(cf_problem_markdown(meta, url, statement), url, nil)
+      else
+        last_err = "problem statement block not found"
+        try_direct(i + 1)
+      end
+    end)
+  end
+
+  try_direct(1)
+end
+
+local function cf_problem_state_reset()
+  state.cf_problem.winid = nil
+  state.cf_problem.bufnr = nil
+  state.cf_problem.root = nil
+  state.cf_problem.url = nil
+  state.cf_problem.markdown = nil
+end
+
+local function cf_problem_write_buffer(bufnr, markdown)
+  local function to_compact(md)
+    local src = vim.split(md, "\n", { plain = true })
+    local out = {}
+    local in_header = true
+    local in_code = false
+    for _, line in ipairs(src) do
+      if line:match("^```") then
+        in_code = not in_code
+      end
+      if in_header then
+        if line:match("^---%s*$") then
+          in_header = false
+        elseif line:match("^%-%s(Source|Fetched):") then
+          goto continue
+        elseif line:match("^%-%sURL:") then
+          line = line:gsub("%?locale=[%w_%-]+", "")
+        end
+      end
+      if not in_code then
+        line = line:gsub("%s+", " ")
+      end
+      out[#out + 1] = line
+      ::continue::
+    end
+    local compact = table.concat(out, "\n")
+    compact = compact:gsub("\n\n\n+", "\n\n")
+    compact = compact:gsub("^\n+", ""):gsub("\n+$", "")
+    return compact
+  end
+
+  local view = M.config.cf.problem.view
+  local rendered = markdown
+  if view == "compact" then
+    rendered = to_compact(markdown)
+  end
+
+  local lines = vim.split(rendered, "\n", { plain = true })
+
+  local function add_hl(group, row, start_col, end_col)
+    if row < 0 or row >= #lines then
+      return
+    end
+    pcall(vim.api.nvim_buf_add_highlight, bufnr, cf_problem_ns, group, row, start_col, end_col)
+  end
+
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  pcall(vim.api.nvim_buf_clear_namespace, bufnr, cf_problem_ns, 0, -1)
+
+  local in_code = false
+  for i, line in ipairs(lines) do
+    local row = i - 1
+    if line:match("^```") then
+      in_code = not in_code
+      add_hl("Delimiter", row, 0, #line)
+    elseif in_code then
+      add_hl("String", row, 0, #line)
+    elseif line:match("^# ") then
+      add_hl("Title", row, 0, #line)
+    elseif line:match("^---%s*$") then
+      add_hl("Comment", row, 0, #line)
+    elseif line:match("^%-%s") then
+      add_hl("Comment", row, 0, #line)
+      local colon = line:find(":", 1, true)
+      if colon then
+        add_hl("Identifier", row, 2, colon)
+      end
+      local url_s, url_e = line:find("https?://%S+")
+      if url_s and url_e then
+        add_hl("Underlined", row, url_s - 1, url_e)
+      end
+    elseif line == "Input" or line == "Output" or line == "Example" or line == "Examples" or line == "Note" then
+      add_hl("Special", row, 0, #line)
+    end
+  end
+
+  vim.bo[bufnr].modifiable = false
+end
+
+local function cf_problem_ensure_pane(root, title)
+  local prev_win = vim.api.nvim_get_current_win()
+  local winid = state.cf_problem.winid
+  local bufnr = state.cf_problem.bufnr
+
+  if not (winid and vim.api.nvim_win_is_valid(winid)) then
+    vim.cmd("rightbelow vsplit")
+    winid = vim.api.nvim_get_current_win()
+    pcall(vim.api.nvim_win_set_width, winid, tonumber(M.config.cf.problem.pane_width) or 72)
+  else
+    vim.api.nvim_set_current_win(winid)
+  end
+
+  if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then
+    bufnr = vim.api.nvim_create_buf(false, true)
+  end
+  vim.api.nvim_win_set_buf(winid, bufnr)
+
+  vim.bo[bufnr].buftype = "nofile"
+  vim.bo[bufnr].bufhidden = "wipe"
+  vim.bo[bufnr].swapfile = false
+  vim.bo[bufnr].modifiable = false
+  vim.bo[bufnr].filetype = "markdown"
+  vim.bo[bufnr].buflisted = false
+  vim.api.nvim_buf_set_name(bufnr, "runic://cf/problem/" .. title)
+
+  vim.wo[winid].number = false
+  vim.wo[winid].relativenumber = false
+  vim.wo[winid].wrap = true
+  vim.wo[winid].linebreak = true
+  vim.wo[winid].breakindent = true
+  vim.wo[winid].signcolumn = "no"
+
+  state.cf_problem.winid = winid
+  state.cf_problem.bufnr = bufnr
+  state.cf_problem.root = root
+
+  if vim.api.nvim_win_is_valid(prev_win) then
+    vim.api.nvim_set_current_win(prev_win)
+  end
+  return bufnr
+end
+
+local function cf_problem_load_async(root, opts, cb)
+  opts = opts or {}
+  local meta = read_cf_meta(root)
+  if not meta or not meta.contest or not meta.problem then
+    cb(nil, nil, "CF metadata missing. Use RunicCFStart first.")
+    return
+  end
+
+  local cache_path = cf_problem_cache_path(root)
+  if M.config.cf.problem.cache and not opts.refresh and file_exists(cache_path) then
+    local cached = read_file(cache_path)
+    if type(cached) == "string" and cached ~= "" then
+      local u = cf_problem_urls(meta)[1]
+      cb(cached, u, nil)
+      return
+    end
+  end
+
+  local function done(markdown, url, err)
+    cb(markdown, url, err)
+  end
+
+  cf_fetch_problem_markdown_async(meta, function(markdown, url, fetch_err)
+    if markdown then
+      if M.config.cf.problem.cache then
+        write_file(cache_path, markdown)
+      end
+      done(markdown, url, nil)
+      return
+    end
+
+    if M.config.cf.problem.cache and file_exists(cache_path) then
+      local cached = read_file(cache_path)
+      if type(cached) == "string" and cached ~= "" then
+        local u = cf_problem_urls(meta)[1]
+        done(cached, u, nil)
+        return
+      end
+    end
+
+    done(nil, nil, fetch_err or "unable to load problem statement")
+  end)
 end
 
 local function cf_solution_relative_path(root)
@@ -544,6 +1616,14 @@ local function preferred_intent_for(ctx)
     return nil
   end
   return state.intent_preferences[ctx.root]
+end
+
+local function set_run_status(update)
+  state.run_status = vim.tbl_extend("force", state.run_status, update)
+end
+
+local function fire_user_event(name)
+  pcall(vim.api.nvim_exec_autocmds, "User", { pattern = name })
 end
 
 local function set_preferred_intent(ctx, intent)
@@ -706,6 +1786,19 @@ local function run_in_terminal(cmd, cwd)
     end
   end
 
+  state.stop_requested = false
+  local started_at = vim.uv.hrtime()
+  set_run_status({
+    status = "running",
+    cmd = cmd,
+    cwd = cwd,
+    started_at = started_at,
+    ended_at = nil,
+    duration_ms = nil,
+    exit_code = nil,
+  })
+  fire_user_event("RunicJobStart")
+
   local job = vim.fn.termopen({ vim.o.shell, "-lc", cmd }, {
     cwd = cwd,
     on_stdout = function(_, data)
@@ -715,9 +1808,25 @@ local function run_in_terminal(cmd, cwd)
       maybe_open_url_from_lines(data)
     end,
     on_exit = function(_, code)
-      if code ~= 0 then
+      local ended_at = vim.uv.hrtime()
+      local duration_ms = math.floor((ended_at - started_at) / 1e6)
+      local status = "success"
+      if state.stop_requested then
+        status = "stopped"
+      elseif code ~= 0 then
+        status = "failed"
+      end
+      set_run_status({
+        status = status,
+        ended_at = ended_at,
+        duration_ms = duration_ms,
+        exit_code = code,
+      })
+      state.active_job = nil
+      fire_user_event("RunicJobEnd")
+      if status == "failed" then
         vim.schedule(function()
-          vim.notify("Runic command exited with code " .. tostring(code), vim.log.levels.WARN)
+          vim.notify("Runic command exited with code " .. tostring(code) .. " in " .. tostring(duration_ms) .. "ms", vim.log.levels.WARN)
         end)
       end
     end,
@@ -903,10 +2012,14 @@ local function add_project_candidates(ctx)
 
   local python_runner = M.config.overrides.python_project_runner or vim.g.runic_python_project_runner == true
   if not is_rule_disabled("project_python") and (ctx.filetype == "python" or ctx.ext == "py") and python_runner then
-    if has_any_file(root, { "pyproject.toml", "uv.lock", "poetry.lock", "requirements.txt" }) then
+    if has_any_file(root, { "pyproject.toml", "uv.lock", "poetry.lock", "requirements.txt", "Pipfile", "pdm.lock", "hatch.toml", "tox.ini", "noxfile.py" }) then
       local qfile = shellescape(file)
       if has_exec("uv") then
         out[#out + 1] = candidate("project_python", { kind = "project", priority = 8800, command = "uv run " .. qfile, cwd = root, reason = "Python via uv" })
+      elseif has_exec("pdm") and has_file(root, "pdm.lock") then
+        out[#out + 1] = candidate("project_python", { kind = "project", priority = 8790, command = "pdm run python " .. qfile, cwd = root, reason = "Python via pdm" })
+      elseif has_exec("pipenv") and has_file(root, "Pipfile") then
+        out[#out + 1] = candidate("project_python", { kind = "project", priority = 8780, command = "pipenv run python " .. qfile, cwd = root, reason = "Python via pipenv" })
       elseif has_exec("poetry") then
         out[#out + 1] = candidate("project_python", { kind = "project", priority = 8700, command = "poetry run python " .. qfile, cwd = root, reason = "Python via poetry" })
       else
@@ -998,6 +2111,128 @@ local function add_project_candidates(ctx)
     })
   end
 
+  if not is_rule_disabled("project_php") and has_file(root, "artisan") then
+    out[#out + 1] = candidate("project_php", {
+      kind = "project",
+      priority = 7890,
+      command = "php artisan serve",
+      cwd = root,
+      reason = "Laravel artisan serve",
+    })
+  end
+
+  if not is_rule_disabled("project_scripting") and has_any_file(root, { "deno.json", "deno.jsonc" }) then
+    out[#out + 1] = candidate("project_scripting", {
+      kind = "project",
+      priority = 7820,
+      command = "deno task start || deno task dev || deno task test",
+      cwd = root,
+      reason = "Deno task",
+    })
+  end
+
+  if not is_rule_disabled("project_scripting") and has_file(root, "build.zig") then
+    out[#out + 1] = candidate("project_scripting", {
+      kind = "project",
+      priority = 7810,
+      command = "zig build run || zig build",
+      cwd = root,
+      reason = "Zig build",
+    })
+  end
+
+  if not is_rule_disabled("project_scripting") and has_file(root, "stack.yaml") then
+    out[#out + 1] = candidate("project_scripting", {
+      kind = "project",
+      priority = 7800,
+      command = "stack run || stack test",
+      cwd = root,
+      reason = "Haskell stack",
+    })
+  end
+
+  if not is_rule_disabled("project_scripting") and #vim.fs.find("*.cabal", { path = root, type = "file", limit = 1 }) > 0 then
+    out[#out + 1] = candidate("project_scripting", {
+      kind = "project",
+      priority = 7790,
+      command = "cabal run || cabal test",
+      cwd = root,
+      reason = "Haskell cabal",
+    })
+  end
+
+  if not is_rule_disabled("project_scripting") and has_any_file(root, { "deps.edn", "project.clj" }) then
+    out[#out + 1] = candidate("project_scripting", {
+      kind = "project",
+      priority = 7780,
+      command = has_file(root, "deps.edn") and "clj -M" or "lein run",
+      cwd = root,
+      reason = "Clojure project",
+    })
+  end
+
+  return out
+end
+
+local function add_task_candidates(ctx, opts)
+  local out = {}
+  local root = ctx.root
+  opts = opts or {}
+  local include_in_auto = M.config.tasks.include_in_auto
+  if opts.force_include then
+    include_in_auto = true
+  end
+  if not M.config.tasks.enabled or not include_in_auto then
+    return out
+  end
+
+  local base = tonumber(M.config.tasks.base_priority) or 7600
+  local scripts = read_package_scripts(root)
+  local npm_order = { "dev", "start", "test", "build", "lint" }
+  for idx, name in ipairs(npm_order) do
+    if scripts[name] and not is_rule_disabled("task_npm") then
+      out[#out + 1] = candidate("task_npm", {
+        kind = "task",
+        priority = base - idx,
+        command = command_for_script(default_pm(root), name),
+        cwd = root,
+        reason = "Task script '" .. name .. "'",
+      })
+    end
+  end
+
+  if has_any_file(root, { "justfile", ".justfile" }) and not is_rule_disabled("task_just") then
+    local just_tasks = discover_just_tasks(root)
+    for idx, name in ipairs(just_tasks) do
+      out[#out + 1] = candidate("task_just", {
+        kind = "task",
+        priority = base - 30 - idx,
+        command = "just " .. name,
+        cwd = root,
+        reason = "Just task '" .. name .. "'",
+      })
+      if idx >= 5 then
+        break
+      end
+    end
+  end
+
+  if has_taskfile(root) and not is_rule_disabled("task_taskfile") then
+    local task_tasks = discover_taskfile_tasks(root)
+    for idx, name in ipairs(task_tasks) do
+      out[#out + 1] = candidate("task_taskfile", {
+        kind = "task",
+        priority = base - 60 - idx,
+        command = "task " .. name,
+        cwd = root,
+        reason = "Taskfile task '" .. name .. "'",
+      })
+      if idx >= 5 then
+        break
+      end
+    end
+  end
+
   return out
 end
 
@@ -1050,6 +2285,8 @@ local function add_file_candidates(ctx)
     sh = "bash " .. qfile,
     zsh = "zsh " .. qfile,
     fish = "fish " .. qfile,
+    bash = "bash " .. qfile,
+    ksh = "ksh " .. qfile,
     ps1 = "pwsh -File " .. qfile,
     r = "Rscript " .. qfile,
     jl = "julia " .. qfile,
@@ -1065,11 +2302,16 @@ local function add_file_candidates(ctx)
       return "javac " .. qfile .. " && java " .. shellescape(class_name)
     end)(),
     kt = "kotlinc -script " .. qfile,
+    kts = "kotlinc -script " .. qfile,
+    scala = (has_exec("scala-cli") and ("scala-cli run " .. qfile) or ("scala " .. qfile)),
+    fsx = "dotnet fsi " .. qfile,
     swift = "swift " .. qfile,
     nim = "nim c -r " .. qfile,
     zig = "zig run " .. qfile,
     dart = "dart run " .. qfile,
     exs = "elixir " .. qfile,
+    rkt = "racket " .. qfile,
+    scm = (has_exec("guile") and ("guile " .. qfile) or "scheme " .. qfile),
     clj = "clojure " .. qfile,
     hs = "runhaskell " .. qfile,
     ml = "ocaml " .. qfile,
@@ -1108,6 +2350,71 @@ local function add_file_candidates(ctx)
     local first = vim.fn.getline(1)
     if type(first) == "string" and first:sub(1, 2) == "#!" then
       out[#out + 1] = candidate("fallback_shebang", { kind = "fallback", priority = 2900, command = qfile, cwd = ctx.root, reason = "Shebang script" })
+    end
+  end
+
+  return out
+end
+
+local function add_test_intent_candidates(ctx)
+  local out = {}
+  local file = ctx.file
+  local qfile = shellescape(file)
+  local root = ctx.root
+
+  if (ctx.filetype == "python" or ctx.ext == "py") and not is_rule_disabled("project_python_test") then
+    if has_exec("pytest") then
+      out[#out + 1] = candidate("project_python_test", {
+        kind = "project",
+        priority = 8890,
+        command = "pytest " .. qfile,
+        cwd = root,
+        reason = "Python targeted pytest",
+      })
+    else
+      out[#out + 1] = candidate("project_python_test", {
+        kind = "project",
+        priority = 8880,
+        command = "python3 -m pytest " .. qfile,
+        cwd = root,
+        reason = "Python targeted pytest module",
+      })
+    end
+  end
+
+  if has_file(root, "go.mod") and not is_rule_disabled("project_go_test_target") then
+    local rel = relative_to(vim.fs.dirname(file), root)
+    local pkg = "./" .. rel
+    if rel == "." or rel == "" then
+      pkg = "./..."
+    end
+    out[#out + 1] = candidate("project_go_test_target", {
+      kind = "project",
+      priority = 8580,
+      command = "go test " .. shellescape(pkg),
+      cwd = root,
+      reason = "Go package test",
+    })
+  end
+
+  if has_file(root, "Cargo.toml") and not is_rule_disabled("project_rust_test_target") then
+    local rel = relative_to(file, root)
+    if rel:match("^tests/.+%.rs$") then
+      out[#out + 1] = candidate("project_rust_test_target", {
+        kind = "project",
+        priority = 8390,
+        command = "cargo test --test " .. path_stem(rel),
+        cwd = root,
+        reason = "Rust integration test target",
+      })
+    else
+      out[#out + 1] = candidate("project_rust_test_target", {
+        kind = "project",
+        priority = 8380,
+        command = "cargo test",
+        cwd = root,
+        reason = "Rust cargo test",
+      })
     end
   end
 
@@ -1191,8 +2498,14 @@ local function resolve_candidates(opts)
   if mode ~= "file" then
     append(add_project_candidates(ctx))
   end
+  if mode ~= "file" then
+    append(add_task_candidates(ctx))
+  end
   if mode ~= "project" then
     append(add_file_candidates(ctx))
+  end
+  if intent == "test" then
+    append(add_test_intent_candidates(ctx))
   end
 
   if #candidates == 0 then
@@ -1385,12 +2698,101 @@ function M.stop()
     return
   end
 
+  state.stop_requested = true
   local ok = vim.fn.jobstop(active.id)
   if ok == 1 then
     vim.notify("Runic stopped active process", vim.log.levels.INFO)
   else
     vim.notify("Runic failed to stop active process", vim.log.levels.WARN)
   end
+end
+
+function M.root(args)
+  local ctx, err = build_context({ bufnr = 0 })
+  if not ctx then
+    vim.notify("Runic: " .. err, vim.log.levels.WARN)
+    return
+  end
+
+  local target = args and args.path or ""
+  if type(target) == "string" and target ~= "" then
+    local root = expand_path(target)
+    set_root_override(root)
+    state.cache_gen = state.cache_gen + 1
+    state.cache = {}
+    vim.notify("Runic root override set: " .. root, vim.log.levels.INFO)
+    return
+  end
+
+  local override = get_root_override()
+  local lines = {
+    "Runic Root",
+    string.rep("=", 10),
+    "resolved: " .. ctx.root,
+    "source: " .. ctx.root_source,
+  }
+  if type(override) == "string" and override ~= "" then
+    lines[#lines + 1] = "override: " .. override
+  end
+  vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO, { title = "Runic" })
+end
+
+function M.root_reset()
+  reset_root_override()
+  state.cache_gen = state.cache_gen + 1
+  state.cache = {}
+  vim.notify("Runic root override cleared", vim.log.levels.INFO)
+end
+
+function M.status()
+  local st = state.run_status
+  local lines = {
+    "Runic Status",
+    string.rep("=", 12),
+    "status: " .. tostring(st.status or "idle"),
+  }
+  if st.cmd then
+    lines[#lines + 1] = "cmd: " .. st.cmd
+  end
+  if st.cwd then
+    lines[#lines + 1] = "cwd: " .. st.cwd
+  end
+  if st.exit_code ~= nil then
+    lines[#lines + 1] = "exit_code: " .. tostring(st.exit_code)
+  end
+  if st.duration_ms then
+    lines[#lines + 1] = "duration_ms: " .. tostring(st.duration_ms)
+  end
+  vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO, { title = "Runic" })
+end
+
+function M.tasks()
+  local ctx, err = build_context({ bufnr = 0 })
+  if not ctx then
+    vim.notify("Runic: " .. err, vim.log.levels.WARN)
+    return
+  end
+
+  local tasks = add_task_candidates(ctx, { force_include = true })
+  if #tasks == 0 then
+    vim.notify("Runic: no project tasks discovered", vim.log.levels.INFO)
+    return
+  end
+  sort_candidates(tasks)
+
+  vim.ui.select(tasks, {
+    prompt = "Runic tasks",
+    format_item = function(item)
+      return item.label
+    end,
+  }, function(choice)
+    if not choice then
+      return
+    end
+    state.last = choice
+    add_history(choice)
+    run_in_terminal(choice.command, choice.cwd)
+  end)
 end
 
 function M.restart_last()
@@ -1664,8 +3066,18 @@ function M.cf_start(opts)
     solution_file = "main.cpp",
   })
 
+  if state.cf_problem.root and state.cf_problem.root ~= problem_root then
+    M.cf_problem_close()
+  end
+
   cf_apply_start_cwd(problem_root)
   vim.cmd.edit(main_cpp)
+
+  if M.config.cf.problem.auto_open then
+    local refresh = M.config.cf.problem.refresh_on_start == true
+    M.cf_problem_open({ root = problem_root, refresh = refresh })
+  end
+
   vim.notify("Runic CF workspace ready: " .. problem_root, vim.log.levels.INFO)
 end
 
@@ -1677,7 +3089,82 @@ end
 function M.cf_mode_off()
   M.config.cf.enabled = false
   M.cf_watch_stop()
+  M.cf_problem_close()
   vim.notify("Runic CF mode disabled", vim.log.levels.INFO)
+end
+
+function M.cf_problem_open(opts)
+  opts = opts or {}
+  local root = opts.root
+  if type(root) ~= "string" or root == "" then
+    local err
+    root, err = cf_root_for_current_buffer()
+    if not root then
+      vim.notify("Runic: " .. err, vim.log.levels.ERROR)
+      return
+    end
+  end
+
+  local meta = read_cf_meta(root)
+  if not meta or not meta.contest or not meta.problem then
+    vim.notify("CF metadata missing. Use RunicCFStart first.", vim.log.levels.ERROR)
+    return
+  end
+
+  local title = tostring(meta.contest) .. tostring(meta.problem)
+  local bufnr = cf_problem_ensure_pane(root, title)
+  local request_id = (state.cf_problem.request_id or 0) + 1
+  state.cf_problem.request_id = request_id
+
+  cf_problem_write_buffer(bufnr, "Loading Codeforces problem statement...")
+
+  cf_problem_load_async(root, { refresh = opts.refresh == true }, function(markdown, url, err)
+    if request_id ~= state.cf_problem.request_id then
+      return
+    end
+    if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then
+      return
+    end
+    if not markdown then
+      local fallback = cf_problem_error_markdown(meta, err)
+      state.cf_problem.markdown = fallback
+      cf_problem_write_buffer(bufnr, fallback)
+      vim.notify("Runic CF problem pane: " .. tostring(err), vim.log.levels.WARN)
+      return
+    end
+    state.cf_problem.markdown = markdown
+    cf_problem_write_buffer(bufnr, markdown)
+    state.cf_problem.url = url
+  end)
+end
+
+function M.cf_problem_refresh()
+  M.cf_problem_open({ refresh = true })
+end
+
+function M.cf_problem_toggle_view()
+  local cur = M.config.cf.problem.view
+  local next_view = (cur == "compact") and "comfortable" or "compact"
+  M.config.cf.problem.view = next_view
+
+  local bufnr = state.cf_problem.bufnr
+  if bufnr and vim.api.nvim_buf_is_valid(bufnr) and type(state.cf_problem.markdown) == "string" and state.cf_problem.markdown ~= "" then
+    cf_problem_write_buffer(bufnr, state.cf_problem.markdown)
+  end
+  vim.notify("Runic CF problem view: " .. next_view, vim.log.levels.INFO)
+end
+
+function M.cf_problem_close()
+  state.cf_problem.request_id = (state.cf_problem.request_id or 0) + 1
+  local winid = state.cf_problem.winid
+  if winid and vim.api.nvim_win_is_valid(winid) then
+    pcall(vim.api.nvim_win_close, winid, true)
+  end
+  local bufnr = state.cf_problem.bufnr
+  if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+    pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+  end
+  cf_problem_state_reset()
 end
 
 function M.cf_status()
@@ -2097,8 +3584,12 @@ register_commands = function()
     { "RunicRunProject", function() M.run({ mode = "project" }) end, "Runic project mode" },
     { "RunicPreview", function() M.preview({ mode = "auto" }) end, "Preview runic decision" },
     { "RunicExplain", function() M.explain({ mode = "auto" }) end, "Explain runic decision" },
+    { "RunicRoot", function(args) M.root({ path = args.args }) end, "Show or set runic root override" },
+    { "RunicRootReset", M.root_reset, "Clear runic root override" },
+    { "RunicStatus", M.status, "Show runic run status" },
     { "RunicLast", M.run_last, "Rerun last runic command" },
     { "RunicHistory", M.history_pick, "Pick from runic history" },
+    { "RunicTasks", M.tasks, "Pick and run discovered project tasks" },
     { "RunicCacheClear", M.clear_cache, "Clear runic cache" },
     { "RunicCacheInfo", M.cache_info, "Show runic cache stats" },
     { "RunicHealth", M.health, "Check runic toolchain health" },
@@ -2120,12 +3611,18 @@ register_commands = function()
     { "RunicCFReplayFail", M.cf_replay_fail, "Replay last stress counterexample" },
     { "RunicCFCheck", M.cf_check, "Run pre-submit checks" },
     { "RunicCFSubmit", M.cf_submit, "Open problem page for manual submit" },
+    { "RunicCFProblemOpen", M.cf_problem_open, "Open Codeforces problem pane" },
+    { "RunicCFProblemRefresh", M.cf_problem_refresh, "Refresh Codeforces problem pane" },
+    { "RunicCFProblemClose", M.cf_problem_close, "Close Codeforces problem pane" },
+    { "RunicCFProblemToggleView", M.cf_problem_toggle_view, "Toggle CF problem pane view" },
   }
 
   for _, spec in ipairs(specs) do
     pcall(vim.api.nvim_del_user_command, spec[1])
     if spec[1] == "RunicCFStart" then
       vim.api.nvim_create_user_command(spec[1], spec[2], { desc = spec[3], nargs = "+" })
+    elseif spec[1] == "RunicRoot" then
+      vim.api.nvim_create_user_command(spec[1], spec[2], { desc = spec[3], nargs = "?", complete = "dir" })
     else
       vim.api.nvim_create_user_command(spec[1], spec[2], { desc = spec[3] })
     end

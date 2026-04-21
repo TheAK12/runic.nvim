@@ -2,6 +2,18 @@
 
 ## Unreleased (feat/runic-cf-mode)
 
+- add root controls via `:RunicRoot` and `:RunicRootReset` with configurable `root.strategy`
+- add `:RunicStatus` and `User RunicJobStart`/`User RunicJobEnd` run lifecycle events
+- add `:RunicTasks` and task candidate discovery from `package.json`, `justfile`, and `Taskfile`
+- add rule packs (`packs.*`) to enable/disable groups of resolver rules
+- improve test intent with targeted Python/Go/Rust test candidates
+- enable Python project runner by default and expand Python project marker detection
+- add support for more project/file types including Deno, Zig, Laravel, Haskell, Clojure, Scala, F#, and more shell/script extensions
+- add Codeforces problem statement pane (`RunicCFProblemOpen/Refresh/Close`) with auto-open on `RunicCFStart` and workspace cache fallback
+- add anti-bot handling for CF problem pane by detecting challenge pages and using optional proxy fallback
+- make CF problem pane fetch asynchronous to avoid UI stalls during start/refresh
+- harden CF problem pane fallback path to avoid hard parser failures and show helpful fallback content when fetch fails
+- add CF problem pane view toggle (`RunicCFProblemToggleView`) with comfortable/compact rendering modes
 - add first complete Codeforces workflow:
   - workspace bootstrap via `RunicCFStart`
   - contest/debug profile switching via `RunicCFProfile`

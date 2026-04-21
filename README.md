@@ -54,6 +54,8 @@ Use:
 - `:RunicRun` to run the top-ranked candidate
 - `:RunicPreview` to inspect why it chose that command
 
+For projects with task runners, use `:RunicTasks`.
+
 ## How command selection works
 
 `runic` uses a ranked rule list:
@@ -82,8 +84,12 @@ If you want to force behavior:
 - `:RunicRunProject` force project-mode
 - `:RunicPreview` show selection details
 - `:RunicExplain` alias of `RunicPreview`
+- `:RunicRoot` show resolved root or set a temporary root override
+- `:RunicRootReset` clear temporary root override
+- `:RunicStatus` show active/last run status
 - `:RunicLast` rerun last command
 - `:RunicHistory` pick from command history
+- `:RunicTasks` pick and run discovered project tasks
 - `:RunicCacheClear` clear resolver cache
 - `:RunicCacheInfo` show cache stats
 - `:RunicHealth` check common toolchain executables
@@ -104,6 +110,10 @@ If you want to force behavior:
 - `:RunicCFReplayFail` rerun on saved counterexample
 - `:RunicCFCheck` run pre-submit checks
 - `:RunicCFSubmit` open manual submit page
+- `:RunicCFProblemOpen` open problem statement pane on the right
+- `:RunicCFProblemRefresh` refetch and rerender statement pane
+- `:RunicCFProblemClose` close statement pane
+- `:RunicCFProblemToggleView` toggle pane view (`comfortable` / `compact`)
 
 ## Codeforces workflow
 
@@ -115,6 +125,14 @@ Recommended flow:
 4. Enable watch with `:RunicCFWatch` while coding
 5. Use `:RunicCFStress` if you have `stress/gen.cpp` and `stress/brute.cpp`
 6. Use `:RunicCFSubmit` for manual submit
+
+Problem pane:
+
+- `RunicCFStart` can open a read-only problem statement pane on the right.
+- The pane fetches from Codeforces and caches rendered text in the workspace.
+- Use `RunicCFProblemRefresh` to update, and `RunicCFProblemClose` to close.
+- Fetch is asynchronous; the pane shows a loading message while content is retrieved.
+- Use `RunicCFProblemToggleView` to switch between `comfortable` and `compact` layout.
 
 Workspace layout:
 
@@ -134,6 +152,8 @@ Notes:
 - `watch/test/stress/submit` operate on configured solution file (`main.cpp` by default).
 - `cf.chdir_on_start` controls cwd switch only when `:RunicCFStart` runs.
 
+Task discovery supports `package.json` scripts, `justfile`, and `Taskfile.yml`/`Taskfile.yaml`.
+
 ## Configuration
 
 ### Common options
@@ -151,7 +171,23 @@ require("runic").setup({
   root = {
     use_lsp = true,
     resolver = nil,
+    strategy = { "custom", "marker", "lsp", "file" },
     markers = { ".git", "package.json", "pyproject.toml", "Cargo.toml", "go.mod" },
+  },
+  tasks = {
+    enabled = true,
+    include_in_auto = true,
+    base_priority = 7600,
+  },
+  packs = {
+    tasks = true,
+    python = true,
+    go = true,
+    rust = true,
+    node = true,
+    c_cpp = true,
+    scripting = true,
+    fallback = true,
   },
   terminal = {
     use_snacks = false,
@@ -187,9 +223,23 @@ require("runic").setup({
       run_stress = false,
       stress_cases = 200,
     },
+    problem = {
+      auto_open = true,
+      pane_width = 72,
+      cache = true,
+      cache_file = ".runic-problem.md",
+      refresh_on_start = false,
+      lang = "en",
+      proxy_fallback = true,
+      proxy_base = "https://r.jina.ai/http://",
+      view = "comfortable", -- "comfortable" | "compact"
+    },
   },
 })
 ```
+
+If direct Codeforces fetch is blocked by anti-bot challenge, runic uses `proxy_fallback`
+to retrieve readable statement text.
 
 ## Overrides
 
@@ -203,12 +253,31 @@ You can override command selection with globals:
 - `vim.g.runic_use_snacks_terminal = true`
 - `vim.g.runic_open_url = true`
 
+Status hooks:
+
+- `User RunicJobStart`
+- `User RunicJobEnd`
+
 ## Troubleshooting
 
 - Run `:RunicPreview` to inspect selection and candidate list.
+- Run `:RunicRoot` to inspect root source and override root when needed.
 - Run `:RunicCacheClear` after changing project files or config.
 - Run `:RunicHealth` if a toolchain command fails.
 - If root detection is wrong, configure `root.markers` or `root.resolver`.
+
+### Cookbook
+
+- Monorepo temporary root:
+  - `:RunicRoot path/to/package`
+  - run commands
+  - `:RunicRootReset`
+- Task-first project:
+  - keep `tasks.include_in_auto = true`
+  - use `:RunicTasks` for explicit task picking
+- Test-first flow:
+  - use `:RunicAction` -> `Test`
+  - runic prefers targeted tests for Python/Go/Rust
 
 ## Help and license
 
