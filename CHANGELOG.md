@@ -14,6 +14,8 @@
 - make CF problem pane fetch asynchronous to avoid UI stalls during start/refresh
 - harden CF problem pane fallback path to avoid hard parser failures and show helpful fallback content when fetch fails
 - add CF problem pane view toggle (`RunicCFProblemToggleView`) with comfortable/compact rendering modes
+- add safe keymap mode with conflict skipping and `RunicKeymaps` mapping report command
+- add default CF keymaps under `keymaps.cf_*`, managed by safe/force/off keymap mode policy
 - add first complete Codeforces workflow:
   - workspace bootstrap via `RunicCFStart`
   - contest/debug profile switching via `RunicCFProfile`

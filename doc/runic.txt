@@ -53,6 +53,9 @@ COMMANDS                                                         *runic-commands
     :RunicExplain
         Show selected candidate and top candidates.
 
+    :RunicKeymaps
+        Show active runic mappings and skipped conflicting mappings.
+
     :RunicRoot [path]
         Show resolved root, or set temporary root override.
 
@@ -157,6 +160,12 @@ GLOBALS                                                           *runic-globals
 
     g:runic_open_url
         When true, open detected http/https URLs in the default browser.
+
+    keymap_mode
+        Keymap policy: "safe" (default), "force", or "off".
+
+    keymaps.cf_*
+        Optional default Codeforces mappings are included and follow keymap_mode conflict rules.
 
     root.strategy
         Root source order. Default: {"custom", "marker", "lsp", "file"}.

@@ -40,11 +40,27 @@ require("runic").setup({})
 require("runic").setup({
   create_commands = true,
   create_keymaps = true,
+  keymap_mode = "safe", -- "safe" | "force" | "off"
   keymaps = {
     run = "<leader>r",
     pick = "<leader>rp",
     last = "<leader>rl",
     legacy = "<leader>R",
+    cf_mode_on = "<leader>cfo",
+    cf_mode_off = "<leader>cfO",
+    cf_status = "<leader>cfs",
+    cf_start = "<leader>cfn",
+    cf_profile_contest = "<leader>cfp",
+    cf_profile_debug = "<leader>cfP",
+    cf_import = "<leader>cfi",
+    cf_test = "<leader>cft",
+    cf_watch_on = "<leader>cfw",
+    cf_watch_off = "<leader>cfW",
+    cf_stress = "<leader>cfx",
+    cf_replay = "<leader>cfr",
+    cf_check = "<leader>cfc",
+    cf_submit = "<leader>cfu",
+    cf_problem_view = "<leader>cfv",
   },
 })
 ```
@@ -84,6 +100,7 @@ If you want to force behavior:
 - `:RunicRunProject` force project-mode
 - `:RunicPreview` show selection details
 - `:RunicExplain` alias of `RunicPreview`
+- `:RunicKeymaps` show active and skipped runic mappings
 - `:RunicRoot` show resolved root or set a temporary root override
 - `:RunicRootReset` clear temporary root override
 - `:RunicStatus` show active/last run status
@@ -168,6 +185,7 @@ require("runic").setup({
     last = "<leader>rl",
     legacy = "<leader>R",
   },
+  keymap_mode = "safe", -- skip mappings that already exist
   root = {
     use_lsp = true,
     resolver = nil,
@@ -257,6 +275,12 @@ Status hooks:
 
 - `User RunicJobStart`
 - `User RunicJobEnd`
+
+Keymap modes:
+
+- `safe` (default): set only unmapped keys; skip conflicts
+- `force`: always set runic keymaps
+- `off`: do not create runic keymaps
 
 ## Troubleshooting
 

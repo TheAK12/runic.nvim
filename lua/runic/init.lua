@@ -34,16 +34,36 @@ local state = {
     exit_code = nil,
   },
   stop_requested = false,
+  keymap_report = {
+    active = {},
+    skipped = {},
+  },
 }
 
 local defaults = {
   create_commands = true,
   create_keymaps = true,
+  keymap_mode = "safe", -- "safe" | "force" | "off"
   keymaps = {
     run = "<leader>r",
     pick = "<leader>rp",
     last = "<leader>rl",
     legacy = "<leader>R",
+    cf_mode_on = "<leader>cfo",
+    cf_mode_off = "<leader>cfO",
+    cf_status = "<leader>cfs",
+    cf_start = "<leader>cfn",
+    cf_profile_contest = "<leader>cfp",
+    cf_profile_debug = "<leader>cfP",
+    cf_import = "<leader>cfi",
+    cf_test = "<leader>cft",
+    cf_watch_on = "<leader>cfw",
+    cf_watch_off = "<leader>cfW",
+    cf_stress = "<leader>cfx",
+    cf_replay = "<leader>cfr",
+    cf_check = "<leader>cfc",
+    cf_submit = "<leader>cfu",
+    cf_problem_view = "<leader>cfv",
   },
   root = {
     use_lsp = true,
@@ -200,6 +220,7 @@ local command_names = {
   "RunicRunProject",
   "RunicPreview",
   "RunicExplain",
+  "RunicKeymaps",
   "RunicRoot",
   "RunicRootReset",
   "RunicStatus",
@@ -2795,6 +2816,37 @@ function M.tasks()
   end)
 end
 
+function M.keymaps_info()
+  local report = state.keymap_report or { active = {}, skipped = {} }
+  local lines = {
+    "Runic Keymaps",
+    string.rep("=", 13),
+    "mode: " .. tostring(M.config.keymap_mode),
+    "",
+    "active:",
+  }
+
+  if #report.active == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.active) do
+      lines[#lines + 1] = "  " .. item
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "skipped (conflicts):"
+  if #report.skipped == 0 then
+    lines[#lines + 1] = "  (none)"
+  else
+    for _, item in ipairs(report.skipped) do
+      lines[#lines + 1] = "  " .. item
+    end
+  end
+
+  vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO, { title = "Runic" })
+end
+
 function M.restart_last()
   if not state.last then
     vim.notify("Runic: nothing to restart", vim.log.levels.WARN)
@@ -3584,6 +3636,7 @@ register_commands = function()
     { "RunicRunProject", function() M.run({ mode = "project" }) end, "Runic project mode" },
     { "RunicPreview", function() M.preview({ mode = "auto" }) end, "Preview runic decision" },
     { "RunicExplain", function() M.explain({ mode = "auto" }) end, "Explain runic decision" },
+    { "RunicKeymaps", M.keymaps_info, "Show runic keymap status" },
     { "RunicRoot", function(args) M.root({ path = args.args }) end, "Show or set runic root override" },
     { "RunicRootReset", M.root_reset, "Clear runic root override" },
     { "RunicStatus", M.status, "Show runic run status" },
@@ -3653,6 +3706,41 @@ end
 
 register_keymaps = function()
   local km = M.config.keymaps
+  local mode = M.config.keymap_mode
+
+  state.keymap_report = { active = {}, skipped = {} }
+
+  if mode == "off" then
+    state.keymaps = {}
+    return
+  end
+
+  local function has_existing_map(lhs)
+    if type(lhs) ~= "string" or lhs == "" then
+      return false
+    end
+    local info = vim.fn.maparg(lhs, "n", false, true)
+    if type(info) == "table" and next(info) ~= nil then
+      return true
+    end
+    local check = vim.fn.mapcheck(lhs, "n")
+    return type(check) == "string" and check ~= ""
+  end
+
+  local function map_safe(lhs, rhs, desc)
+    if not lhs then
+      return
+    end
+
+    if mode == "safe" and has_existing_map(lhs) then
+      state.keymap_report.skipped[#state.keymap_report.skipped + 1] = lhs .. " -> " .. desc
+      return
+    end
+
+    vim.keymap.set("n", lhs, rhs, { desc = desc })
+    state.keymaps[#state.keymaps + 1] = lhs
+    state.keymap_report.active[#state.keymap_report.active + 1] = lhs .. " -> " .. desc
+  end
 
   for _, mapped in ipairs(state.keymaps) do
     pcall(vim.keymap.del, "n", mapped)
@@ -3660,30 +3748,95 @@ register_keymaps = function()
   state.keymaps = {}
 
   if km.run then
-    vim.keymap.set("n", km.run, function()
+    map_safe(km.run, function()
       M.run({ mode = "auto" })
-    end, { desc = "Runic run" })
-    state.keymaps[#state.keymaps + 1] = km.run
+    end, "Runic run")
   end
   if km.pick then
-    vim.keymap.set("n", km.pick, function()
+    map_safe(km.pick, function()
       M.pick({ mode = "auto" })
-    end, { desc = "Runic pick" })
-    state.keymaps[#state.keymaps + 1] = km.pick
+    end, "Runic pick")
   end
   if km.last then
-    vim.keymap.set("n", km.last, M.run_last, { desc = "Runic last" })
-    state.keymaps[#state.keymaps + 1] = km.last
+    map_safe(km.last, M.run_last, "Runic last")
   end
   if km.legacy then
-    vim.keymap.set("n", km.legacy, function()
+    map_safe(km.legacy, function()
       if vim.fn.exists(":RunFile") == 2 then
         vim.cmd.RunFile()
       else
         vim.notify("RunFile command is unavailable", vim.log.levels.WARN)
       end
-    end, { desc = "Run file (legacy)" })
-    state.keymaps[#state.keymaps + 1] = km.legacy
+    end, "Run file (legacy)")
+  end
+
+  if km.cf_mode_on then
+    map_safe(km.cf_mode_on, M.cf_mode_on, "CF mode on")
+  end
+  if km.cf_mode_off then
+    map_safe(km.cf_mode_off, M.cf_mode_off, "CF mode off")
+  end
+  if km.cf_status then
+    map_safe(km.cf_status, M.cf_status, "CF status")
+  end
+  if km.cf_start then
+    map_safe(km.cf_start, function()
+      local contest = vim.fn.input("CF contest id: ")
+      if contest == "" then
+        return
+      end
+      local problem = vim.fn.input("CF problem index: ")
+      if problem == "" then
+        return
+      end
+      M.cf_start({ contest = contest, problem = problem })
+    end, "CF new/start problem")
+  end
+  if km.cf_profile_contest then
+    map_safe(km.cf_profile_contest, function()
+      M.cf_set_profile("contest")
+    end, "CF profile contest")
+  end
+  if km.cf_profile_debug then
+    map_safe(km.cf_profile_debug, function()
+      M.cf_set_profile("debug")
+    end, "CF profile debug")
+  end
+  if km.cf_import then
+    map_safe(km.cf_import, M.cf_import_samples, "CF import samples")
+  end
+  if km.cf_test then
+    map_safe(km.cf_test, M.cf_test, "CF test samples")
+  end
+  if km.cf_watch_on then
+    map_safe(km.cf_watch_on, M.cf_watch, "CF watch on")
+  end
+  if km.cf_watch_off then
+    map_safe(km.cf_watch_off, M.cf_watch_stop, "CF watch off")
+  end
+  if km.cf_stress then
+    map_safe(km.cf_stress, M.cf_stress, "CF stress")
+  end
+  if km.cf_replay then
+    map_safe(km.cf_replay, M.cf_replay_fail, "CF replay fail")
+  end
+  if km.cf_check then
+    map_safe(km.cf_check, M.cf_check, "CF check")
+  end
+  if km.cf_submit then
+    map_safe(km.cf_submit, M.cf_submit, "CF submit manual")
+  end
+  if km.cf_problem_view then
+    map_safe(km.cf_problem_view, M.cf_problem_toggle_view, "CF problem view")
+  end
+
+  if mode == "safe" and #state.keymap_report.skipped > 0 then
+    vim.schedule(function()
+      vim.notify(
+        "Runic keymaps: " .. tostring(#state.keymap_report.skipped) .. " skipped due to existing mappings. Use :RunicKeymaps",
+        vim.log.levels.INFO
+      )
+    end)
   end
 end
 
