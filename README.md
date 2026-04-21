@@ -72,6 +72,37 @@ Use:
 
 For projects with task runners, use `:RunicTasks`.
 
+## Default keymaps
+
+When `create_keymaps = true`, runic can set these defaults.
+
+Core:
+
+- `<leader>r` run
+- `<leader>rp` pick candidate
+- `<leader>rl` run last
+- `<leader>R` legacy `:RunFile`
+
+Codeforces:
+
+- `<leader>cfo` mode on
+- `<leader>cfO` mode off
+- `<leader>cfs` status
+- `<leader>cfn` start/new problem (prompt)
+- `<leader>cfp` contest profile
+- `<leader>cfP` debug profile
+- `<leader>cfi` import samples
+- `<leader>cft` test samples
+- `<leader>cfw` watch on
+- `<leader>cfW` watch off
+- `<leader>cfx` stress
+- `<leader>cfr` replay fail
+- `<leader>cfc` check
+- `<leader>cfu` submit (manual)
+- `<leader>cfv` problem pane view toggle
+
+Use `:RunicKeymaps` to see which mappings were applied or skipped.
+
 ## How command selection works
 
 `runic` uses a ranked rule list:
@@ -142,6 +173,20 @@ Recommended flow:
 4. Enable watch with `:RunicCFWatch` while coding
 5. Use `:RunicCFStress` if you have `stress/gen.cpp` and `stress/brute.cpp`
 6. Use `:RunicCFSubmit` for manual submit
+
+## Codeforces guide (default keymaps)
+
+This is the same workflow using built-in default CF mappings.
+
+1. Start problem with `<leader>cfn` and enter contest/problem.
+2. Confirm mode/status with `<leader>cfo` and `<leader>cfs`.
+3. Import samples with `<leader>cfi`.
+4. Run sample tests with `<leader>cft`.
+5. Turn watch on while coding with `<leader>cfw` (off with `<leader>cfW`).
+6. Run stress with `<leader>cfx`; replay fail with `<leader>cfr`.
+7. Run final check with `<leader>cfc`.
+8. Submit manually with `<leader>cfu`.
+9. Toggle problem pane layout with `<leader>cfv`.
 
 Problem pane:
 
