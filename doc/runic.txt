@@ -53,11 +53,23 @@ COMMANDS                                                         *runic-commands
     :RunicExplain
         Show selected candidate and top candidates.
 
+    :RunicRoot [path]
+        Show resolved root, or set temporary root override.
+
+    :RunicRootReset
+        Clear temporary root override.
+
+    :RunicStatus
+        Show active/last run status.
+
     :RunicLast
         Rerun last executed candidate.
 
     :RunicHistory
         Pick and rerun a command from runic history.
+
+    :RunicTasks
+        Pick and run discovered project tasks.
 
     :RunicCacheClear
         Clear resolver cache.
@@ -110,6 +122,18 @@ COMMANDS                                                         *runic-commands
     :RunicCFSubmit
         Open Codeforces problem page for manual submit.
 
+    :RunicCFProblemOpen
+        Open Codeforces problem statement in a right-side pane.
+
+    :RunicCFProblemRefresh
+        Refetch and rerender Codeforces problem statement pane.
+
+    :RunicCFProblemClose
+        Close Codeforces problem statement pane.
+
+    :RunicCFProblemToggleView
+        Toggle Codeforces problem pane view between comfortable and compact.
+
 ==============================================================================
 GLOBALS                                                           *runic-globals*
 
@@ -134,6 +158,18 @@ GLOBALS                                                           *runic-globals
     g:runic_open_url
         When true, open detected http/https URLs in the default browser.
 
+    root.strategy
+        Root source order. Default: {"custom", "marker", "lsp", "file"}.
+
+    tasks.enabled / tasks.include_in_auto / tasks.base_priority
+        Configure task discovery from package scripts, justfile, and Taskfile.
+
+    packs
+        Enable/disable rule packs (node/python/go/rust/tasks/etc.).
+
+    User RunicJobStart / User RunicJobEnd
+        Autocmd events fired when runic jobs start and end.
+
     cf.workspace_root
         Root directory for Codeforces workspaces (default: ~/codeforces).
 
@@ -143,6 +179,10 @@ GLOBALS                                                           *runic-globals
 
     cf.profiles
         Contest/debug compile profiles for C++ mode.
+
+    cf.problem.auto_open / pane_width / cache / cache_file / refresh_on_start / lang
+    / proxy_fallback / proxy_base / view
+        Configure CF problem statement pane behavior and caching.
 
     terminal.url_allowlist
         Setup option. URL auto-open only opens hosts in this list.
