@@ -3721,10 +3721,9 @@ register_keymaps = function()
     end
     local info = vim.fn.maparg(lhs, "n", false, true)
     if type(info) == "table" and next(info) ~= nil then
-      return true
+      return info.lhs == lhs
     end
-    local check = vim.fn.mapcheck(lhs, "n")
-    return type(check) == "string" and check ~= ""
+    return false
   end
 
   local function map_safe(lhs, rhs, desc)

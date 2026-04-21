@@ -16,6 +16,7 @@
 - add CF problem pane view toggle (`RunicCFProblemToggleView`) with comfortable/compact rendering modes
 - add safe keymap mode with conflict skipping and `RunicKeymaps` mapping report command
 - add default CF keymaps under `keymaps.cf_*`, managed by safe/force/off keymap mode policy
+- fix safe keymap conflict detection to avoid false positives from longer mappings sharing prefixes
 - add first complete Codeforces workflow:
   - workspace bootstrap via `RunicCFStart`
   - contest/debug profile switching via `RunicCFProfile`
